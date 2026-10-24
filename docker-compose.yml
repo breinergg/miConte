@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: miconte_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MICONTE_POSTGRES_USER:-miconte_user}
+      POSTGRES_PASSWORD: ${MICONTE_POSTGRES_PASSWORD:-miconte_dev_password_change_me}
+      POSTGRES_DB: ${MICONTE_POSTGRES_DB:-miconte_db}
+    ports:
+      - "${MICONTE_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - miconte_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  miconte_pgdata:
+    name: miconte_pgdata
