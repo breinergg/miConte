@@ -7,7 +7,7 @@ name = "miconte"
 version = "0.1.0"
 description = "miConte — Plataforma de inteligencia de contenido (Fase 1: Entorno y persistencia inicial)"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.13,<3.16"
 dependencies = [
     "alembic>=1.14.0,<2.0.0",
     "fastapi[standard]>=0.115.0,<1.0.0",
@@ -17,12 +17,22 @@ dependencies = [
     "sqlalchemy>=2.0.36,<3.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28.0,<1.0.0",
+    "mypy>=1.14.0,<2.0.0",
+    "pytest>=8.3.0,<9.0.0",
+    "ruff>=0.9.0,<1.0.0",
+    "uv>=0.13.0,<1.0.0",
+]
+
 [dependency-groups]
 dev = [
     "httpx>=0.28.0,<1.0.0",
     "mypy>=1.14.0,<2.0.0",
     "pytest>=8.3.0,<9.0.0",
     "ruff>=0.9.0,<1.0.0",
+    "uv>=0.13.0,<1.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -43,10 +53,14 @@ markers = [
 target-version = "py313"
 line-length = 100
 src = ["src", "tests"]
+extend-exclude = [".agents", ".uv-python"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "S"]
 ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]
 
 [tool.mypy]
 python_version = "3.13"

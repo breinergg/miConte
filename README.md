@@ -70,6 +70,7 @@ Toda la fundamentación técnica, funcional y arquitectónica de **miConte** se 
 * [Diccionario de Datos (`docs/data-dictionary.md`)](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/data-dictionary.md): Catálogo de métricas públicas, privadas y derivadas, fórmulas matemáticas, unidades y tratamiento de datos ausentes/censurados.
 * [Hoja de Ruta (`docs/roadmap.md`)](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/roadmap.md): Planificación por fases secuenciales, entregables y puertas de verificación (*gates*).
 * [Riesgos y Mitigaciones (`docs/risks.md`)](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/risks.md): Análisis de cuotas de YouTube, permisos OAuth, compatibilidad de entorno local, seguridad y costos.
+* [Matriz de Compatibilidad de YouTube API (`docs/youtube-api-compatibility.md`)](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/youtube-api-compatibility.md): Validación técnica de endpoints, combinaciones de dimensiones, alcances OAuth y cuotas (Fase 2).
 * **Decisiones de Arquitectura (`docs/decisions/`):**
   * [ADR-0001: Arquitectura de Monolito Modular y Aislamiento del Motor Estadístico](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/decisions/0001-modular-monolith-and-statistical-isolation.md)
   * [ADR-0002: Stack de Base de Datos y Acceso a Datos (SQLAlchemy 2.0 + Alembic)](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/decisions/0002-database-and-orm-stack.md)
@@ -206,5 +207,6 @@ Alembic está configurado en [`alembic.ini`](file:///Users/breinergonzalezmachad
 ## Estado Actual del Proyecto
 
 * **Fase 0 — Fundamentación y Arquitectura:** Completada y aprobada.
-* **Fase Actual:** **Fase 1 — Entorno y Persistencia Inicial** (Implementada, verificada y lista para revisión).
-* **Próxima Fase:** **Fase 2 — Validación Técnica de las APIs de YouTube** (No iniciada; requiere aprobación explícita de la Fase 1).
+* **Fase 1 — Entorno y Persistencia Inicial:** Completada y aprobada.
+* **Fase Actual:** **Fase 2 — Validación Técnica de las APIs de YouTube** (Validación de contratos `verified_offline` completada; comprobación `verified_live` documentada y pendiente de credenciales locales de Google Cloud).
+* **Próxima Fase:** **Fase 3 — Modelo de Datos y Backend de Dominio** (No iniciada; requiere revisión y aprobación de la Fase 2).
