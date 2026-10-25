@@ -58,7 +58,7 @@ Toda métrica expuesta por el motor estadístico y por la API REST de **miConte*
 | `estimated_minutes_watched` | `estimatedMinutesWatched` | `minutes` | $[0, \infty)$ | Minutos totales estimados de visualización acumulados en el periodo. |
 | `average_view_duration_sec` | `averageViewDuration` | `seconds` | $[0, \infty)$ | Duración media en segundos de las reproducciones durante el periodo. |
 | `average_view_percentage` | `averageViewPercentage` | `percentage` | $[0, 100+]$ | Porcentaje promedio de un video visto durante una reproducción (puede superar 100% si hay repeticiones/bucles). |
-| `likes_gained` | `likes` | `count` | $(-\infty, \infty)$ | Cambio neto o conteo de "Me gusta" en el periodo analítico. |
+| `likes_count` | `likes` | `count` | $[0, \infty)$ | Número de veces que los usuarios indicaron que les gustó un video dándole una calificación positiva en el periodo analítico (métrica de actividad, no es saldo neto). Si una respuesta presentase un valor negativo, se aislará como anomalía técnica sujeta a investigación. |
 | `comments_count` | `comments` | `count` | $[0, \infty)$ | Comentarios recibidos en el periodo. |
 | `shares_count` | `shares` | `count` | $[0, \infty)$ | Veces que el contenido fue compartido mediante el botón Compartir de YouTube. |
 | `subscribers_gained` | `subscribersGained` | `count` | $[0, \infty)$ | Suscriptores ganados atribuidos al video o canal en el periodo. |
@@ -149,3 +149,25 @@ Es obligatorio distinguir conceptual y técnicamente tres fenómenos diferentes 
    * Esto **no es censura estadística aleatoria**, sino una **observación incompleta por ventana temporal aún en curso (exposición parcial)**. Estos videos se etiquetan con `incomplete_observation_window = True` y se excluyen del cálculo de la línea base histórica del horizonte $T$ hasta que cumplan $\Delta t \ge T$.
 3. **Censura Estadística Formal por la Derecha (`is_right_censored = True`):**
    * Se reserva para análisis formales de **tiempo hasta un evento** (*survival / time-to-event analysis*, por ejemplo, el tiempo transcurrido hasta que un video alcanza un umbral de $K$ visualizaciones o hasta que su velocidad diaria cae por debajo de un nivel basal), en los cuales el evento de interés aún no ha ocurrido al finalizar el periodo de seguimiento. En dichos modelos no se descarta la observación, sino que se incorpora su tiempo de exposición truncado mediante estimadores específicos de supervivencia si se implementan.
+
+---
+
+## 6. Mapeo Físico del Esquema Relacional en PostgreSQL (`miconte_db` — Fase 3)
+
+Implementado mediante SQLAlchemy 2.0 y gestionado con migraciones incrementales de Alembic (`alembic/versions/465c43158ab0_phase3_domain_schema.py`), conforme a ADR-0005:
+
+| Tabla PostgreSQL | Granularidad / Entidad | Clave Primaria | Clave de Integridad / Unicidad | Restricciones de Dominio y Nulabilidad |
+| :--- | :--- | :--- | :--- | :--- |
+| `users` | Usuario de la plataforma | `id UUID` | `UNIQUE(email)` | `hashed_password NOT NULL`, `is_active BOOLEAN` |
+| `oauth_connections` | Credenciales de autorización | `id UUID` | `UNIQUE(user_id, platform, external_channel_id)` | Campos para ciphertext (`encrypted_*`); servicio criptográfico requerido en Fase 4. `FK(users.id CASCADE)` |
+| `channels` | Catálogo de canal conectado | `id UUID` | `UNIQUE(youtube_channel_id)` | `uploads_playlist_id NOT NULL`, `FK(users.id CASCADE)` |
+| `channel_public_snapshots` | Captura puntual de canal | `id UUID` | `UNIQUE(channel_id, captured_at)` | `view_count >= 0`, `subscriber_count NULL` (oculto vs 0) |
+| `videos` | Catálogo de videos publicados | `id UUID` | `UNIQUE(youtube_video_id)` | `duration_seconds >= 0`, `FK(channels.id CASCADE)` |
+| `video_public_snapshots` | Captura puntual de video | `id UUID` | `UNIQUE(video_id, captured_at)` | `like_count NULL` y `comment_count NULL` (oculto vs 0) |
+| `channel_daily_metrics` | Serie diaria de canal | `id UUID` | `UNIQUE(channel_id, metric_date)` | `CHECK (likes >= 0 OR is_anomalous = TRUE)` |
+| `video_daily_metrics` | Serie diaria por video | `id UUID` | `UNIQUE(video_id, metric_date)` | `thumbnail_impressions NULL`, `thumbnail_ctr NULL [0,1]` |
+| `video_period_metrics` | Agregado por ventana | `id UUID` | `UNIQUE(video_id, start_date, end_date)` | `CHECK (start_date <= end_date)`, `likes >= 0` |
+| `sync_runs` | Auditoría de sincronización | `id UUID` | N/A (`ix_sync_runs_channel_started`) | `records_processed >= 0`, `FK(channels.id CASCADE)` |
+| `analysis_runs` | Ejecución de motor analítico | `id UUID` | N/A (`ix_analysis_runs_channel_started`) | `parameters JSONB`, `sample_size_n >= 0`, `summary JSONB` |
+| `recommendations` | Diagnósticos deterministas | `id UUID` | N/A (`ix_recommendations_channel_created`) | `description` no causal, `metrics_evidence JSONB` |
+

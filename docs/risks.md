@@ -86,12 +86,18 @@ Este documento identifica los riesgos técnicos, estadísticos, regulatorios (pe
 
 ### R-09: Exposición de Credenciales OAuth 2.0 o Secretos de API
 * **Severidad:** Crítica | **Probabilidad:** Baja (con controles activos)
-* **Descripción:** Filtración de `client_secret`, API Keys o `refresh_token` de los canales conectados en logs, respuestas de API o commits de Git.
-* **Mitigación:**
-  1. Uso obligatorio de variables de entorno con prefijo `MICONTE_` cargadas mediante `pydantic-settings` (`SecretStr` para evitar impresión accidental en logs).
-  2. Cifrado simétrico (`Fernet`) de los tokens OAuth (`access_token`, `refresh_token`) antes de persistirlos en `miconte_db` (Fase 3 / Fase 4).
-  3. Exclusión estricta de `.env`, `client_secret*.json` y tokens en `.gitignore`.
-  4. Ejecución de `security-review` en cada fase y en la **Fase 10 (Auditoría y Despliegue)**.
+* **Descripción:** Filtración de `client_secret`, API Keys o tokens OAuth (`access_token`, `refresh_token`) de los canales conectados en logs, respuestas de API, volcados de base de datos o commits de Git.
+* **Distinción de Seguridad en Fase 3 vs. Fase 4:**
+  * En la Fase 3, la tabla `oauth_connections` proporciona columnas nombradas `encrypted_access_token` y `encrypted_refresh_token`, las cuales son **únicamente campos reservados para texto cifrado (*ciphertext*)**. La base de datos no aplica cifrado por sí misma y su presencia no garantiza que los valores depositados estén protegidos.
+  * Se diferencian explícitamente tres componentes: (1) las columnas receptoras en PostgreSQL (Fase 3), (2) el servicio de cifrado y descifrado autenticado (Fase 4), y (3) la gestión y protección de las claves criptográficas (Fase 4).
+* **Mitigación y Requisitos Obligatorios para Fase 4:**
+  1. **Prohibición de Almacenamiento Previo:** No se permite almacenar tokens OAuth reales hasta que la **Fase 4** implemente y pruebe el servicio criptográfico.
+  2. **Cifrado Autenticado:** La Fase 4 deberá implementar cifrado autenticado, como **AES-GCM**, empleando una biblioteca criptográfica estándar y activamente mantenida (como `cryptography`).
+  3. **Separación Estricta de Claves:** Las claves de cifrado deben mantenerse fuera de la base de datos y completamente separadas de los tokens almacenados (gestionadas mediante variables de entorno aisladas o KMS).
+  4. **Protección contra Fugas en Logs:** Prohibir terminantemente registrar tokens (en texto plano o cifrado) y claves criptográficas en registros del sistema (*logs*) o mensajes de error.
+  5. **Pruebas Criptográficas Rigurosas:** Comprobar mediante pruebas unitarias e integración el cifrado, el descifrado autorizado, la **detección de manipulaciones o datos alterados (*tamper detection*)** y el manejo seguro de excepciones.
+  6. **Variables de Entorno y Git:** Uso obligatorio de variables de entorno con prefijo `MICONTE_` cargadas mediante `pydantic-settings` (`SecretStr`) y exclusión estricta de `.env`, `client_secret*.json` y credenciales en `.gitignore`.
+  7. Ejecución de `security-review` en cada fase y auditoría exhaustiva en la **Fase 10 (Auditoría y Despliegue)**.
 
 ### R-10: Costos Operativos Inesperados (Cloud, APIs de Terceros y LLMs)
 * **Severidad:** Baja | **Probabilidad:** Baja

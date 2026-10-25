@@ -70,8 +70,19 @@ flowchart TB
 * **Límites:** No contiene lógica matemática ni consultas SQL directas. Traduce solicitudes HTTP en llamadas a los servicios de aplicación y envuelve los resultados con metadatos de trazabilidad (`source`, `period`, `unit`, `limitations`).
 
 ### 2.2 Persistencia y Repositorios (`miconte.persistence`)
-* **Responsabilidad:** Gestionar el ciclo de vida de las sesiones de base de datos hacia PostgreSQL (`miconte_db`), definir los modelos relacionales con **SQLAlchemy 2.0** (estilo declarativo `Mapped` y `mapped_column`), gestionar las migraciones con **Alembic** y encapsular las consultas SQL detrás de repositorios.
+* **Responsabilidad:** Gestionar el ciclo de vida de las sesiones de base de datos hacia PostgreSQL (`miconte_db`), definir los modelos relacionales con **SQLAlchemy 2.0** (estilo declarativo `Mapped` y `mapped_column`), gestionar las migraciones con **Alembic** y encapsular las consultas SQL detrás de repositorios especializados.
 * **Límites:** Convierte modelos ORM en objetos de dominio o `pandas.DataFrame` antes de entregarlos al motor estadístico, evitando que los objetos de sesión de SQLAlchemy se filtren hacia la capa analítica.
+* **Esquema Relacional Especializado (Fase 3 / ADR-0005):**
+  * **Seguridad y Usuarios (`users`, `oauth_connections`):**
+    * Aislamiento multi-usuario estricto mediante claves foráneas directas (`user_id`).
+    * **Distinción de Seguridad sobre Tokens OAuth (Fase 3 vs. Fase 4):** La tabla `oauth_connections` define las columnas `encrypted_access_token` y `encrypted_refresh_token` como **campos reservados para almacenar texto cifrado (*ciphertext*)**. La mera presencia de estas columnas en la base de datos **no garantiza por sí sola que los valores persistidos estén cifrados**. Se distinguen formalmente tres niveles: (1) las columnas receptoras del esquema (Fase 3), (2) el servicio de cifrado y descifrado autenticado (pendiente para la Fase 4) y (3) la gestión y protección de las claves criptográficas fuera de la base de datos (Fase 4). Queda establecido que la **Fase 4** deberá implementar y probar exhaustivamente el mecanismo criptográfico (usando cifrado autenticado como AES-GCM con una biblioteca mantenida como `cryptography`, claves separadas de la base de datos, pruebas de detección de modificaciones y prohibición de texto plano o registro en logs) **antes de permitir el almacenamiento de tokens OAuth reales**.
+  * **Catálogo Descriptivo (`channels`, `videos`):** Metadatos estables de canales y videos. Incluye `channels.uploads_playlist_id` para enumeración paginada sin consumir cuota de `search.list` y restricción `CHECK (duration_seconds >= 0)`.
+  * **Instantáneas Públicas (`channel_public_snapshots`, `video_public_snapshots`):** Capturas históricas acumuladas en `captured_at`. Distingue nítidamente entre ausencia (`NULL`, creador ocultó o desactivó la estadística) y cero (`0`). Claves compuestas únicas `(channel_id, captured_at)` y `(video_id, captured_at)`.
+  * **Métricas Analíticas Privadas por Periodo (`channel_daily_metrics`, `video_daily_metrics`, `video_period_metrics`):**
+    * Tablas fuertemente tipadas en lugar de EAV para permitir carga vectorizada directa a `pandas.DataFrame`.
+    * Contrato de `likes` no negativo con aislamiento de anomalías (`CHECK (likes >= 0 OR is_anomalous = TRUE)`).
+    * Métricas de alcance (`thumbnail_impressions`, `thumbnail_ctr`, `reach_source`) estrictamente anulables para operar con o sin `Reporting API v1`.
+  * **Auditoría y Recomendaciones (`sync_runs`, `analysis_runs`, `recommendations`):** Trazabilidad de sincronizaciones, ejecuciones analíticas con tamaño muestral $N$ y diagnósticos descriptivos deterministas no causales.
 
 ### 2.3 Integración con YouTube (`miconte.integrations.youtube`)
 * **Responsabilidad:** Autenticar mediante OAuth 2.0 (solo lectura), consumir `YouTube Data API v3` y `YouTube Analytics API v2` mediante `HTTPX` o el cliente oficial de Google, controlar el presupuesto de cuotas (*quota tracker*), manejar paginación y transformar las respuestas crudas de Google en DTOs normalizados de ingesta.

@@ -70,12 +70,13 @@ flowchart TD
 * **Objetivo:** Diseñar e implementar el esquema relacional definitivo de dominio en `miconte_db` (basado en los datos reales validados en la Fase 2), junto con las entidades de dominio, repositorios SQLAlchemy 2.0 y migraciones Alembic.
 * **Dependencias:** Fase 2 aprobada.
 * **Entregables:**
-  * Modelos SQLAlchemy 2.0 y migraciones Alembic para canales (`channels`), videos (`videos`), credenciales OAuth cifradas, instantáneas públicas (`video_public_snapshots`), series diarias privadas (`video_daily_metrics`) y auditoría de ejecuciones (`sync_runs`).
-  * Repositorios de acceso a datos y esquemas de dominio con trazabilidad de fuente, unidad y ventana temporal.
+  * Modelos SQLAlchemy 2.0 y migración Alembic incremental (`465c43158ab0_phase3_domain_schema.py`) cubriendo las 12 entidades: usuarios (`users`), autorizaciones cifradas (`oauth_connections`), canales (`channels`), capturas de canal (`channel_public_snapshots`), videos (`videos`), capturas de video (`video_public_snapshots`), métricas diarias de canal (`channel_daily_metrics`), métricas diarias de video (`video_daily_metrics`), agregados por ventana (`video_period_metrics`), sincronizaciones (`sync_runs`), ejecuciones analíticas (`analysis_runs`) y recomendaciones deterministas (`recommendations`).
+  * Repositorios de persistencia (`UserRepository`, `ChannelRepository`, `VideoRepository`, `MetricsRepository`, `AnalysisRepository`) que preservan integridad referencial, separación de usuarios, granularidades y el aislamiento de anomalías en métricas de interacción.
+  * ADR-0005 documentando la adopción de tablas especializadas fuertemente tipadas en lugar de estructuras genéricas EAV.
 * **Criterios de Aceptación:**
-  * Migraciones reversibles verificadas (`alembic upgrade head` / `downgrade`).
-  * Índices, claves foráneas y restricciones validados conforme a `postgres-best-practices`.
-  * Suite de pruebas de repositorios en `pytest` al 100% en verde.
+  * Migraciones reversibles verificadas (`alembic upgrade head` $\leftrightarrow$ `alembic downgrade base`).
+  * Índices, claves foráneas, unicidades y restricciones `CHECK` validados conforme a `postgres-best-practices`.
+  * Suite completa de pruebas en `pytest` (53 pruebas unitarias y de integración) al 100% en verde.
 
 ---
 
