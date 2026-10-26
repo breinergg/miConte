@@ -74,6 +74,15 @@ class VideoRepository:
         )
         return list(self.session.execute(stmt).scalars().all())
 
+    def get_all_videos_for_channel(self, channel_id: uuid.UUID) -> list[Video]:
+        """Fetch all videos belonging to a channel ordered by publication date."""
+        stmt = (
+            select(Video)
+            .where(Video.channel_id == channel_id)
+            .order_by(Video.published_at.desc())
+        )
+        return list(self.session.execute(stmt).scalars().all())
+
     def record_public_snapshot(
         self,
         *,

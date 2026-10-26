@@ -1,10 +1,13 @@
 """Integration tests verifying Alembic migrations forward and backward against PostgreSQL."""
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect
 
 from miconte.persistence.session import get_engine
+
+pytestmark = pytest.mark.integration
 
 
 def test_alembic_migrations_roundtrip_upgrade_downgrade() -> None:

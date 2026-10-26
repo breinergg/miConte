@@ -54,6 +54,22 @@ class AnalysisRepository:
         self.session.flush()
         return run
 
+    def get_sync_run(self, sync_run_id: uuid.UUID) -> SyncRun | None:
+        """Fetch a specific SyncRun by ID."""
+        return self.session.get(SyncRun, sync_run_id)
+
+    def get_latest_sync_run(
+        self,
+        channel_id: uuid.UUID,
+        sync_type: str | None = None,
+    ) -> SyncRun | None:
+        """Fetch the most recent SyncRun for a channel, optionally filtered by type."""
+        stmt = select(SyncRun).where(SyncRun.channel_id == channel_id)
+        if sync_type:
+            stmt = stmt.where(SyncRun.sync_type == sync_type)
+        stmt = stmt.order_by(SyncRun.started_at.desc()).limit(1)
+        return self.session.execute(stmt).scalar_one_or_none()
+
     def list_sync_runs(
         self,
         channel_id: uuid.UUID,
@@ -67,6 +83,26 @@ class AnalysisRepository:
             .limit(limit)
         )
         return list(self.session.execute(stmt).scalars().all())
+
+    def get_processed_reporting_report_ids(self, channel_id: uuid.UUID) -> set[str]:
+        """Retrieve set of Reporting API report IDs already ingested for a channel."""
+        import contextlib
+        import json
+
+        stmt = select(SyncRun).where(
+            SyncRun.channel_id == channel_id,
+            SyncRun.status.in_(["succeeded", "partially_succeeded", "completed"]),
+        )
+        runs = self.session.execute(stmt).scalars().all()
+        processed: set[str] = set()
+        for r in runs:
+            if not r.error_message:
+                continue
+            with contextlib.suppress(Exception):
+                data = json.loads(r.error_message)
+                if isinstance(data, dict) and "processed_report_ids" in data:
+                    processed.update(data["processed_report_ids"])
+        return processed
 
     # -------------------------------------------------------------------------
     # Analysis Runs

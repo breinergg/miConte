@@ -76,6 +76,9 @@ Toda la fundamentación técnica, funcional y arquitectónica de **miConte** se 
   * [ADR-0002: Stack de Base de Datos y Acceso a Datos (SQLAlchemy 2.0 + Alembic)](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/decisions/0002-database-and-orm-stack.md)
   * [ADR-0003: Abstracción de Proveedores LLM e Independencia de MCP](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/decisions/0003-llm-abstraction-and-mcp-independence.md)
   * [ADR-0004: Estrategia de Integración con APIs Oficiales de YouTube](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/decisions/0004-youtube-official-apis-integration-strategy.md)
+  * [ADR-0005: Modelo de Datos de Dominio, Series Temporales y Gobernanza Relacional](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/decisions/0005-domain-data-model-and-relational-governance.md)
+  * [ADR-0006: Cifrado Autenticado de Tokens OAuth (AES-256-GCM) y Ciclo de Vida OAuth 2.0](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/decisions/0006-token-cryptography-and-oauth-lifecycle.md)
+  * [ADR-0007: Motor de Sincronización de Datos, Histórico de Métricas y Planificador Periódico](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/docs/decisions/0007-synchronization-engine-and-scheduler.md)
 
 ---
 
@@ -126,6 +129,17 @@ Todas las variables de configuración utilizan el prefijo obligatorio `MICONTE_`
 | `MICONTE_POSTGRES_HOST` | `127.0.0.1` | Host de PostgreSQL. |
 | `MICONTE_POSTGRES_PORT` | `5432` | Puerto expuesto de PostgreSQL. |
 | `MICONTE_DATABASE_URL` | `postgresql+psycopg://...` | Cadena de conexión SQLAlchemy 2.x con driver `psycopg` v3. |
+| `MICONTE_TOKEN_ENCRYPTION_KEY` | *(hex 64 chars)* | Clave maestra AES-256-GCM para cifrado autenticado de tokens OAuth. |
+| `MICONTE_TOKEN_ENCRYPTION_KEY_ID` | `k1` | Identificador de versión de la clave de cifrado (soporte para rotación). |
+| `MICONTE_OAUTH_STATE_SECRET` | *(string secreto)* | Secreto para firma HMAC-SHA256 del parámetro state anti-CSRF en OAuth. |
+| `MICONTE_YOUTUBE_CLIENT_ID` | *(opcional)* | Client ID de Google Cloud OAuth 2.0 Web Application. |
+| `MICONTE_YOUTUBE_CLIENT_SECRET` | *(opcional)* | Client Secret de Google Cloud OAuth 2.0 (protegido con `SecretStr`). |
+| `MICONTE_YOUTUBE_REDIRECT_URI` | `http://.../callback` | URI de redirección OAuth registrada en Google Cloud Console. |
+| `MICONTE_YOUTUBE_API_KEY` | *(opcional)* | API Key pública para llamadas sin autenticar a Data API v3. |
+| `MICONTE_SYNC_INTERVAL_HOURS` | `24` | Intervalo en horas para el planificador periódico en segundo plano. |
+| `MICONTE_SYNC_ENABLED` | `true` | Habilitar o deshabilitar la ejecución automática del planificador. |
+| `MICONTE_SYNC_MAX_VIDEOS_PER_CHANNEL` | `200` | Límite máximo de videos recientes a procesar por canal en cada corrida. |
+| `MICONTE_SYNC_ANALYTICS_DAYS` | `30` | Ventana histórica de días hacia atrás para métricas diarias de Analytics. |
 
 ### 3. Gestión de PostgreSQL (`miconte_db`) con Docker Compose
 
@@ -202,11 +216,28 @@ Alembic está configurado en [`alembic.ini`](file:///Users/breinergonzalezmachad
 2. **Versión de Python del sistema (`/usr/bin/python3` 3.9.6):** No uses el Python preinstalado por Apple en `/usr/bin/python3`. El repositorio incluye [`.python-version`](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/.python-version) apuntando a **Python 3.15.1** (que incorpora las correcciones de seguridad y mantenimiento de octubre de 2026 sobre `3.15.0`) y [`uv.lock`](file:///Users/breinergonzalezmachado/DESARROLLO%20WEB/miConte/uv.lock) para garantizar instalaciones idénticas bit a bit (`uv sync --extra dev --frozen`).
 3. **Conflicto en el puerto `5432`:** Si tienes otra instancia local de PostgreSQL ocupando el puerto `5432`, ajusta `MICONTE_POSTGRES_PORT` y el puerto en `MICONTE_DATABASE_URL` dentro de tu archivo `.env`.
 
+### 8. Motor de Sincronización y Planificador en Segundo Plano (Fase 5)
+
+miConte dispone de un motor de sincronización (`SyncService`) y un planificador asíncrono en segundo plano (`SyncScheduler`, lifespan de FastAPI) para mantener actualizados los metadatos de canales y videos, registrar instantáneas históricas inmutables y almacenar series diarias de YouTube Analytics y Reporting API v1.
+
+#### Endpoints de la API REST (`/api/v1/sync`):
+
+* `GET /api/v1/sync/channels`: Lista los canales autorizados para el usuario autenticado que están disponibles para sincronización.
+* `POST /api/v1/sync/channels/{channel_id}/trigger`: Dispara una sincronización manual inmediata (admite payload opcional `{ "stages": ["metadata", "public_snapshots", "analytics_daily", ...] }`). Retorna `HTTP 200` con el resumen tipado del `SyncRunResultDTO`.
+* `GET /api/v1/sync/channels/{channel_id}/runs`: Consulta el historial de ejecuciones de sincronización registradas en `sync_runs` para el canal indicado.
+* `GET /api/v1/sync/runs/{run_id}`: Consulta el detalle auditado de una corrida de sincronización específica por su UUID.
+* `GET /api/v1/sync/scheduler/status`: Consulta el estado operativo del planificador en memoria (`running`, `is_enabled`, `interval_hours`, bloqueos por canal y canales con sincronización vencida).
+
+Todos los endpoints exigen autenticación vía `CurrentUserDep` y verifican la pertenencia del canal al usuario autenticado, previniendo accesos indebidos (IDOR).
+
 ---
 
 ## Estado Actual del Proyecto
 
 * **Fase 0 — Fundamentación y Arquitectura:** Completada y aprobada.
 * **Fase 1 — Entorno y Persistencia Inicial:** Completada y aprobada.
-* **Fase Actual:** **Fase 2 — Validación Técnica de las APIs de YouTube** (Validación de contratos `verified_offline` completada; comprobación `verified_live` documentada y pendiente de credenciales locales de Google Cloud).
-* **Próxima Fase:** **Fase 3 — Modelo de Datos y Backend de Dominio** (No iniciada; requiere revisión y aprobación de la Fase 2).
+* **Fase 2 — Validación Técnica de las APIs de YouTube:** Completada y aprobada.
+* **Fase 3 — Modelo de Datos y Backend de Dominio:** Completada y aprobada.
+* **Fase 4 — Integración de Producción con YouTube:** Completada y aprobada (adaptadores oficiales `YouTubeDataClient`, `YouTubeAnalyticsClient`, `YouTubeReportingClient`, servicio criptográfico `TokenEncryptionService` con AES-256-GCM y AAD, flujo OAuth 2.0 Web Server con state anti-CSRF).
+* **Fase Actual:** **Fase 5 — Sincronización e Histórico de Métricas** (Completada: motor de sincronización `SyncService`, planificador `SyncScheduler`, ingestión incremental Data API v3, Analytics API v2 y Reporting API v1, snapshots inmutables preservados por `captured_at`, auditoría completa en `sync_runs`, aislamiento IDOR por usuario autenticado, ADR-0007 documentado; 98 pruebas automatizadas aprobadas con 100% de éxito).
+* **Próxima Fase:** **Fase 6 — Motor Estadístico Determinista** (Métricas derivadas CTR, APV, Engagement Rate, $V_{24h}$, pruebas de normalidad, contrastes de hipótesis no paramétricos/paramétricos, intervalos de confianza bootstrap al 95%, detección determinista de anomalías y series temporales sin LLM).

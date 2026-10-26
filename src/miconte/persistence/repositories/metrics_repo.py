@@ -176,6 +176,47 @@ class MetricsRepository:
         self.session.flush()
         return record
 
+    def upsert_video_daily_reach(
+        self,
+        *,
+        video_id: uuid.UUID,
+        metric_date: date,
+        thumbnail_impressions: int,
+        thumbnail_ctr: float | None = None,
+        reach_source: str = "reporting_api_v1",
+    ) -> VideoDailyMetric:
+        """Upsert reach metrics (impressions and CTR) into video_daily_metrics."""
+        stmt = select(VideoDailyMetric).where(
+            VideoDailyMetric.video_id == video_id,
+            VideoDailyMetric.metric_date == metric_date,
+        )
+        record = self.session.execute(stmt).scalar_one_or_none()
+        if record is None:
+            record = VideoDailyMetric(
+                video_id=video_id,
+                metric_date=metric_date,
+                views=0,
+                estimated_minutes_watched=0,
+                average_view_duration_seconds=0,
+                average_view_percentage=0.0,
+                likes=0,
+                comments=0,
+                shares=0,
+                subscribers_gained=0,
+                subscribers_lost=0,
+                thumbnail_impressions=thumbnail_impressions,
+                thumbnail_ctr=thumbnail_ctr,
+                reach_source=reach_source,
+            )
+            self.session.add(record)
+        else:
+            record.thumbnail_impressions = thumbnail_impressions
+            record.thumbnail_ctr = thumbnail_ctr
+            record.reach_source = reach_source
+
+        self.session.flush()
+        return record
+
     def list_video_daily_metrics(
         self,
         video_id: uuid.UUID,

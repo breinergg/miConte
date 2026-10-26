@@ -53,6 +53,12 @@ Para mantener trazabilidad estricta y no confundir pruebas con respuestas contro
     * Reporte disponible para descarga (`status="reports_available"`).
     * Trabajo creado pero aún sin archivos generados por la ventana de 48h (`status="pending_generation"`).
     * Tipo de reporte no disponible o error de permisos (`unavailable` / `permission_error`).
+* **Zona Horaria y Ventanas Temporales:**
+  * **Zona horaria estándar UTC:** Las marcas de tiempo del periodo de reporte (`startTime`, `endTime`, `createTime`) están estrictamente definidas en **UTC (RFC 3339 `Z`)**, abarcando de medianoche a medianoche UTC (`00:00:00Z` a `00:00:00Z`). Los valores en la columna `date` de los archivos CSV (formato `YYYYMMDD`) representan la fecha calendario en UTC.
+* **Manejo de Reportes Vacíos:**
+  * YouTube emite archivos CSV vacíos (0 bytes o sin registros de datos) para días calendario en los que el canal no registró eventos de alcance (impresiones o clics). El cliente y el motor de sincronización gestionan estos archivos de forma transparente sin considerarlos fallos o corrupciones.
+* **Actualizaciones Retroactivas (*Backfill* y Re-emisión de Versiones):**
+  * Ocasionalmente, YouTube emite una nueva versión de un reporte para un periodo pasado para consolidar datos tardíos. Dicho reporte conserva el mismo intervalo `[startTime, endTime)` pero presenta un `createTime` posterior y un nuevo `report_id`. El motor de sincronización (`SyncService`) compara las marcas `createTime` y sustituye los datos previos mediante *upsert* sin duplicar filas en `video_daily_metrics`.
 
 ---
 
@@ -127,3 +133,28 @@ A partir de la evidencia técnica y las restricciones verificadas en esta Fase 2
      * Los totales por ventana/periodo o serie diaria por video (`video_daily_metrics` / `video_period_metrics`), donde `likes` registra la actividad de calificaciones positivas en el periodo (`INTEGER` / `BIGINT` con valor esperado $\ge 0$). Si en una respuesta de la API llegara a detectarse un valor negativo imprevisto, no debe considerarse un saldo ordinario de pérdida neta de likes, sino registrarse y aislarse como anomalía que requiere investigación técnica.
 2. **Columnas de Impresiones y CTR Anulables con Fuente Explícita:**
    * `thumbnail_impressions` (`BIGINT NULL`) y `thumbnail_ctr` (`DOUBLE PRECISION NULL`) deben ser **anulables (`NULL`)** y estar acompañadas de un campo de trazabilidad (`reach_source`: `'reporting_api_v1' | NULL`), dado que `Analytics API v2` (`reports.query`) no las entrega y `Reporting API v1` tiene una demora inicial de hasta 48 horas tras crear el trabajo `channel_reach_basic_a1`.
+
+---
+
+## 7. Estado de Implementación en Fase 4 (Adaptadores de Producción y OAuth)
+
+Durante la **Fase 4 (Integración de Producción con YouTube)** se construyeron y verificaron los adaptadores HTTP definitivos y el subsistema de autorización:
+
+1. **`YouTubeDataClient` (`miconte.integrations.youtube.data_v3`):**
+   * Implementa `get_channel` (`mine=true` o por ID), `list_playlist_items` (paginación hasta 50 ítems) y `list_videos_batch` (lotes automáticos de 50 IDs, parseo de duración ISO 8601 a segundos y preservación de `like_count`/`comment_count` como `None` cuando el creador los oculta).
+   * Estado de verificación: `verified_offline` (10 tests específicos en `test_youtube_clients.py`).
+2. **`YouTubeAnalyticsClient` (`miconte.integrations.youtube.analytics_v2`):**
+   * Implementa `query_report` para consultas a `reports.query`. Incluye validación local preventiva que rechaza la combinación no admitida `dimensions=video,day` antes del envío por red, evitando desperdiciar llamadas. Normaliza encabezados y filas en `AnalyticsReportDTO`.
+   * Estado de verificación: `verified_offline`.
+3. **`YouTubeReportingClient` (`miconte.integrations.youtube.reporting_v1`):**
+   * Implementa consulta de tipos de reporte, creación y listado de trabajos masivos, y descarga y parseo de archivos CSV para `channel_reach_basic_a1` (validando encabezados y columnas de impresiones y CTR).
+   * Estado de verificación: `verified_offline`.
+4. **Flujo OAuth 2.0 y Servicio Criptográfico (`miconte.security`, `miconte.services`):**
+   * Generación de URL de consentimiento con parámetro `state` firmado con HMAC-SHA256 (anti-CSRF).
+   * Verificación de scopes mínimos requeridos (`youtube.readonly` y `yt-analytics.readonly`).
+   * Cifrado autenticado AES-256-GCM antes de la persistencia en `oauth_connections` con AAD context-bound (`user_id:platform:channel_id:credential_kind`).
+   * Regla de preservación de `refresh_token` en re-autorizaciones.
+   * Renovación automática de tokens de acceso expirados sin exponer credenciales al frontend.
+   * Estado de verificación: `verified_offline` (8 tests en `test_crypto.py` y 7 tests en `test_oauth_flow.py`).
+5. **Estado de Pruebas en Vivo (`verified_live`):**
+   * Al no disponer de credenciales OAuth de Google Cloud configuradas en el entorno local (`MICONTE_YOUTUBE_CLIENT_ID` vacío), la prueba controlada en vivo permanece en estado **`pending` / `documented_not_tested`**. No se fabricaron resultados artificiales, preservando la integridad del registro de evidencia.
