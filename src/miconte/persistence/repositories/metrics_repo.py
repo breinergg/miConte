@@ -3,10 +3,11 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from miconte.models.metrics import ChannelDailyMetric, VideoDailyMetric, VideoPeriodMetric
+from miconte.models.video import Video
 
 
 class MetricsRepository:
@@ -317,4 +318,44 @@ class MetricsRepository:
             VideoPeriodMetric.end_date == end_date,
         )
         return self.session.execute(stmt).scalar_one_or_none()
+
+    # -------------------------------------------------------------------------
+    # Reporting API reach: restatement support
+    # -------------------------------------------------------------------------
+
+    def clear_reach_metrics_for_channel_period(
+        self,
+        channel_id: uuid.UUID,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        """NULL out reach fields for all video_daily_metrics rows in the given date range
+        for the specified channel.
+
+        Used before applying a Reporting API restatement so that metric_date rows absent
+        from the newer report version do not retain stale impressions from the old version.
+        Only affects reach fields (thumbnail_impressions, thumbnail_ctr, reach_source);
+        analytics fields (views, likes, etc.) are untouched.
+        Restricted to rows whose reach_source is 'reporting_api_v1'.
+        Returns the count of rows cleared.
+        """
+        video_id_subq = (
+            select(Video.id).where(Video.channel_id == channel_id).scalar_subquery()
+        )
+        stmt = (
+            update(VideoDailyMetric)
+            .where(
+                VideoDailyMetric.video_id.in_(video_id_subq),
+                VideoDailyMetric.metric_date >= start_date,
+                VideoDailyMetric.metric_date <= end_date,
+                VideoDailyMetric.reach_source == "reporting_api_v1",
+            )
+            .values(thumbnail_impressions=None, thumbnail_ctr=None, reach_source=None)
+            .execution_options(synchronize_session="fetch")
+        )
+        from sqlalchemy.engine import CursorResult
+
+        result: CursorResult[tuple[()]] = self.session.execute(stmt)  # type: ignore[assignment]
+        self.session.flush()
+        return result.rowcount
 

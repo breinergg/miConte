@@ -12,11 +12,16 @@ dependencies = [
     "alembic>=1.14.0,<2.0.0",
     "cryptography>=45.0.0,<48.0.0",
     "fastapi[standard]>=0.115.0,<1.0.0",
+    "google-auth>=2.38.0,<3.0.0",
     "httpx>=0.28.0,<1.0.0",
+    "numpy>=2.0.0,<3.0.0",
+    "pandas>=2.2.0,<3.0.0",
     "psycopg[binary]>=3.2.0,<4.0.0",
     "pydantic>=2.10.0,<3.0.0",
     "pydantic-settings>=2.7.0,<3.0.0",
+    "scipy>=1.13.0,<2.0.0",
     "sqlalchemy>=2.0.36,<3.0.0",
+    "statsmodels>=0.14.0,<1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +29,8 @@ dev = [
     "httpx>=0.28.0,<1.0.0",
     "mypy>=1.14.0,<2.0.0",
     "pytest>=8.3.0,<9.0.0",
+    "pytest-asyncio>=1.0.0,<2.0.0",
+    "respx>=0.21.0,<1.0.0",
     "ruff>=0.9.0,<1.0.0",
     "uv>=0.13.0,<1.0.0",
 ]
@@ -33,6 +40,8 @@ dev = [
     "httpx>=0.28.0,<1.0.0",
     "mypy>=1.14.0,<2.0.0",
     "pytest>=8.3.0,<9.0.0",
+    "pytest-asyncio>=1.0.0,<2.0.0",
+    "respx>=0.21.0,<1.0.0",
     "ruff>=0.9.0,<1.0.0",
     "uv>=0.13.0,<1.0.0",
 ]
@@ -47,6 +56,7 @@ entrypoint = "miconte.main:app"
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra -q --strict-markers"
+asyncio_mode = "auto"
 markers = [
     "integration: pruebas que requieren conexión activa a PostgreSQL (miconte_db)",
 ]
@@ -70,3 +80,7 @@ python_version = "3.13"
 strict = true
 mypy_path = "src"
 packages = ["miconte"]
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "statsmodels.*"]
+ignore_missing_imports = true

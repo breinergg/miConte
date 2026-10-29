@@ -746,10 +746,17 @@ def test_oauth_disconnect_when_google_revocation_fails(
 
 def test_production_environment_rejects_client_supplied_x_user_id(db_session: Session) -> None:
     """Verify that in production environments, X-User-Id is strictly prohibited."""
+    import secrets as _secrets
+    _prod_key = _secrets.token_hex(32)
+    _prod_state_secret = _secrets.token_hex(32)
     prod_settings = Settings(
         environment="production",
+        token_encryption_key=_prod_key,
+        oauth_state_secret=_prod_state_secret,
         youtube_client_id="prod_id",
         youtube_client_secret=SecretStr("prod_secret"),
+        google_login_client_id="prod_google_id",
+        google_login_client_secret=SecretStr("prod_google_secret"),
     )
     app.dependency_overrides[get_settings] = lambda: prod_settings
     try:
@@ -784,7 +791,528 @@ def test_production_environment_rejects_client_supplied_x_user_id(db_session: Se
             else:
                 resp_no_auth = client.post(endpoint, json={"channel_id": "UC123"})
             assert resp_no_auth.status_code == 401
-            assert "not yet configured" in resp_no_auth.json()["detail"]
+            detail = resp_no_auth.json()["detail"]
+            assert "session cookie" in detail or "Authentication required" in detail
 
     finally:
         app.dependency_overrides.pop(get_settings, None)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — OAuth data-deletion integration tests (real PostgreSQL)
+# ---------------------------------------------------------------------------
+
+def _build_channel(
+    session: Session,
+    user_id: uuid.UUID,
+    youtube_channel_id: str,
+) -> object:
+    """Helper: persist a minimal Channel row and return it."""
+    from miconte.models.channel import Channel  # noqa: PLC0415
+
+    ch = Channel(
+        user_id=user_id,
+        youtube_channel_id=youtube_channel_id,
+        title=f"Test Channel {youtube_channel_id}",
+        uploads_playlist_id=f"UU_{youtube_channel_id}",
+    )
+    session.add(ch)
+    session.flush()
+    return ch
+
+
+@pytest.mark.integration
+def test_disconnect_deletes_channel_videos_snapshots_and_metrics(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """disconnect() deletes Channel and all cascading API data (videos, snapshots, sync_runs)."""
+    import asyncio  # noqa: PLC0415
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from miconte.models.analysis import AnalysisRun, SyncRun  # noqa: PLC0415
+    from miconte.models.channel import Channel  # noqa: PLC0415
+    from miconte.models.video import Video, VideoPublicSnapshot  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"del_full_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="pw",
+    )
+    db_session.commit()
+
+    yt_id = f"UC_DEL_{uuid.uuid4().hex[:8]}"
+    ch = _build_channel(db_session, user.id, yt_id)
+
+    vid = Video(
+        channel_id=ch.id,
+        youtube_video_id=f"vid_{uuid.uuid4().hex[:8]}",
+        title="Test Video",
+        published_at=datetime(2024, 1, 1, tzinfo=UTC),
+        duration_iso="PT5M",
+        duration_seconds=300,
+    )
+    db_session.add(vid)
+    db_session.flush()
+
+    snap = VideoPublicSnapshot(
+        video_id=vid.id,
+        captured_at=datetime(2024, 6, 1, tzinfo=UTC),
+        view_count=100,
+    )
+    sync_run = SyncRun(channel_id=ch.id, sync_type="metadata", status="completed")
+    analysis_run = AnalysisRun(
+        channel_id=ch.id,
+        analysis_type="cohort_baseline",
+        status="completed",
+        parameters={},
+    )
+    db_session.add_all([snap, sync_run, analysis_run])
+
+    aad_rf = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id, external_channel_id=yt_id, granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//tok", aad=aad_rf), is_active=True,
+    )
+    db_session.commit()
+
+    channel_pk = ch.id
+    video_pk = vid.id
+    snap_pk = snap.id
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200))
+        )
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        res = await service.disconnect(user_id=user.id, external_channel_id=yt_id)
+        assert res.local_disconnected is True
+
+    asyncio.run(_run())
+
+    db_session.expire_all()
+    assert db_session.get(Channel, channel_pk) is None
+    assert db_session.get(Video, video_pk) is None
+    assert db_session.get(VideoPublicSnapshot, snap_pk) is None
+    assert db_session.execute(
+        select(SyncRun).where(SyncRun.channel_id == channel_pk)
+    ).scalar_one_or_none() is None
+    assert db_session.execute(
+        select(AnalysisRun).where(AnalysisRun.channel_id == channel_pk)
+    ).scalar_one_or_none() is None
+
+
+@pytest.mark.integration
+def test_disconnect_deletes_reporting_ingestions(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """disconnect() deletes reporting_report_ingestions via DB-level FK cascade."""
+    import asyncio  # noqa: PLC0415
+
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from miconte.models.reporting import ReportingReportIngestion  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"del_rep_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw",
+    )
+    db_session.commit()
+
+    yt_id = f"UC_REP_{uuid.uuid4().hex[:8]}"
+    ch = _build_channel(db_session, user.id, yt_id)
+
+    ingestion = ReportingReportIngestion(
+        channel_id=ch.id,
+        report_id=f"rpt_{uuid.uuid4().hex}",
+        job_id="job_001",
+        rows_ingested=10,
+    )
+    db_session.add(ingestion)
+    aad_rf = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id, external_channel_id=yt_id, granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//tok", aad=aad_rf), is_active=True,
+    )
+    db_session.commit()
+
+    channel_pk = ch.id
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200))
+        )
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        await service.disconnect(user_id=user.id, external_channel_id=yt_id)
+
+    asyncio.run(_run())
+
+    db_session.expire_all()
+    remaining = db_session.execute(
+        select(ReportingReportIngestion).where(
+            ReportingReportIngestion.channel_id == channel_pk
+        )
+    ).scalars().all()
+    assert remaining == []
+
+
+@pytest.mark.integration
+def test_disconnect_preserves_other_channel_of_same_user(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """disconnect() on channel A must not affect channel B owned by the same user."""
+    import asyncio  # noqa: PLC0415
+
+    from miconte.models.channel import Channel  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"del_iso_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw",
+    )
+    db_session.commit()
+
+    yt_a = f"UC_A_{uuid.uuid4().hex[:8]}"
+    yt_b = f"UC_B_{uuid.uuid4().hex[:8]}"
+    ch_a = _build_channel(db_session, user.id, yt_a)
+    ch_b = _build_channel(db_session, user.id, yt_b)
+
+    aad_a = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_a, credential_kind="refresh",
+    )
+    aad_b = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_b, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id, external_channel_id=yt_a, granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//tok_a", aad=aad_a), is_active=True,
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id, external_channel_id=yt_b, granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//tok_b", aad=aad_b), is_active=True,
+    )
+    db_session.commit()
+
+    pk_a = ch_a.id
+    pk_b = ch_b.id
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200))
+        )
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        await service.disconnect(user_id=user.id, external_channel_id=yt_a)
+
+    asyncio.run(_run())
+
+    db_session.expire_all()
+    assert db_session.get(Channel, pk_a) is None, "channel A must be deleted"
+    assert db_session.get(Channel, pk_b) is not None, "channel B must survive"
+    conn_b = user_repo.get_oauth_connection(user_id=user.id, external_channel_id=yt_b)
+    assert conn_b is not None and conn_b.is_active is True
+
+
+@pytest.mark.integration
+def test_disconnect_preserves_other_users_channel(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """disconnect() must not delete data belonging to a different user's channel."""
+    import asyncio  # noqa: PLC0415
+
+    from miconte.models.channel import Channel  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user_a = user_repo.create_user(
+        email=f"del_ua_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw",
+    )
+    user_b = user_repo.create_user(
+        email=f"del_ub_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw",
+    )
+    db_session.commit()
+
+    yt_a = f"UC_UA_{uuid.uuid4().hex[:8]}"
+    yt_b = f"UC_UB_{uuid.uuid4().hex[:8]}"
+    _build_channel(db_session, user_a.id, yt_a)
+    ch_b = _build_channel(db_session, user_b.id, yt_b)
+
+    aad_a = build_token_aad(
+        user_id=str(user_a.id), platform="youtube",
+        external_channel_id=yt_a, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user_a.id, external_channel_id=yt_a, granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//tok_a", aad=aad_a), is_active=True,
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user_b.id, external_channel_id=yt_b, granted_scopes=" ".join(REQUIRED_SCOPES),
+        is_active=True,
+    )
+    db_session.commit()
+
+    pk_b = ch_b.id
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200))
+        )
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        await service.disconnect(user_id=user_a.id, external_channel_id=yt_a)
+
+    asyncio.run(_run())
+
+    db_session.expire_all()
+    assert db_session.get(Channel, pk_b) is not None, "user B's channel must be unaffected"
+    conn_b = user_repo.get_oauth_connection(user_id=user_b.id, external_channel_id=yt_b)
+    assert conn_b is not None and conn_b.is_active is True
+
+
+@pytest.mark.integration
+def test_disconnect_deactivates_oauth_connection(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """disconnect() deactivates OAuthConnection and nulls stored tokens; row is not deleted."""
+    import asyncio  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"del_conn_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw",
+    )
+    db_session.commit()
+
+    yt_id = f"UC_CONN_{uuid.uuid4().hex[:8]}"
+    _build_channel(db_session, user.id, yt_id)
+
+    aad_rf = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id, external_channel_id=yt_id, granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//tok", aad=aad_rf), is_active=True,
+    )
+    db_session.commit()
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200))
+        )
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        await service.disconnect(user_id=user.id, external_channel_id=yt_id)
+
+    asyncio.run(_run())
+
+    db_session.expire_all()
+    conn = user_repo.get_oauth_connection(user_id=user.id, external_channel_id=yt_id)
+    assert conn is not None, "OAuthConnection row must still exist"
+    assert conn.is_active is False
+    assert conn.encrypted_access_token is None
+    assert conn.encrypted_refresh_token is None
+    assert conn.token_expires_at is None
+
+
+@pytest.mark.integration
+def test_disconnect_no_channel_created_yet_succeeds(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """disconnect() completes gracefully when no Channel row exists for the connection."""
+    import asyncio  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"del_noc_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw",
+    )
+    yt_id = f"UC_NOC_{uuid.uuid4().hex[:8]}"
+    aad_rf = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id, external_channel_id=yt_id, granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//tok", aad=aad_rf), is_active=True,
+    )
+    db_session.commit()
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200))
+        )
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        res = await service.disconnect(user_id=user.id, external_channel_id=yt_id)
+        assert res.local_disconnected is True
+
+    asyncio.run(_run())
+
+    db_session.expire_all()
+    conn = user_repo.get_oauth_connection(user_id=user.id, external_channel_id=yt_id)
+    assert conn is not None and conn.is_active is False
+
+
+@pytest.mark.integration
+def test_invalid_grant_during_refresh_deletes_channel_data(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """get_valid_access_token() detects invalid_grant and deletes all channel API data."""
+    import asyncio  # noqa: PLC0415
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from miconte.integrations.youtube.exceptions import InvalidGrantError  # noqa: PLC0415
+    from miconte.models.channel import Channel  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"del_igr_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw",
+    )
+    db_session.commit()
+
+    yt_id = f"UC_IGR_{uuid.uuid4().hex[:8]}"
+    ch = _build_channel(db_session, user.id, yt_id)
+    channel_pk = ch.id
+
+    aad_rf = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id,
+        external_channel_id=yt_id,
+        granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//expired_refresh", aad=aad_rf),
+        token_expires_at=datetime.now(UTC) - timedelta(hours=2),
+        is_active=True,
+    )
+    db_session.commit()
+
+    def mock_invalid_grant(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400, json={"error": "invalid_grant", "error_description": "Token has been revoked."}
+        )
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(transport=httpx.MockTransport(mock_invalid_grant))
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        with pytest.raises(InvalidGrantError):
+            await service.get_valid_access_token(
+                user_id=user.id, external_channel_id=yt_id
+            )
+
+    asyncio.run(_run())
+
+    db_session.expire_all()
+    assert db_session.get(Channel, channel_pk) is None, "channel must be deleted on invalid_grant"
+    conn = user_repo.get_oauth_connection(user_id=user.id, external_channel_id=yt_id)
+    assert conn is not None
+    assert conn.is_active is False
+    assert conn.encrypted_refresh_token is None
+
+
+@pytest.mark.integration
+def test_disconnect_analysis_runs_and_recommendations_deleted(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """disconnect() cascades through analysis_runs to recommendations."""
+    import asyncio  # noqa: PLC0415
+
+    from miconte.models.analysis import AnalysisRun, Recommendation  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"del_anr_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw",
+    )
+    db_session.commit()
+
+    yt_id = f"UC_ANR_{uuid.uuid4().hex[:8]}"
+    ch = _build_channel(db_session, user.id, yt_id)
+
+    analysis_run = AnalysisRun(
+        channel_id=ch.id,
+        analysis_type="cohort_baseline",
+        status="completed",
+        parameters={},
+    )
+    db_session.add(analysis_run)
+    db_session.flush()
+
+    rec = Recommendation(
+        analysis_run_id=analysis_run.id,
+        channel_id=ch.id,
+        rule_code="R001",
+        title="Test Recommendation",
+        description="Test description without causal claims",
+        priority="medium",
+        metrics_evidence={},
+    )
+    db_session.add(rec)
+
+    aad_rf = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id, external_channel_id=yt_id, granted_scopes=" ".join(REQUIRED_SCOPES),
+        encrypted_refresh_token=crypto_svc.encrypt("1//tok", aad=aad_rf), is_active=True,
+    )
+    db_session.commit()
+
+    ar_pk = analysis_run.id
+    rec_pk = rec.id
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200))
+        )
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        await service.disconnect(user_id=user.id, external_channel_id=yt_id)
+
+    asyncio.run(_run())
+
+    db_session.expire_all()
+    assert db_session.get(AnalysisRun, ar_pk) is None
+    assert db_session.get(Recommendation, rec_pk) is None

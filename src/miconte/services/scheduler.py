@@ -164,12 +164,73 @@ class SyncScheduler:
             except Exception as exc:
                 logger.error("Error in scheduler periodic execution cycle: %s", exc)
 
+            # Probe expired tokens to detect Google-side revocations on every cycle.
+            # Only connections with expired tokens are probed, so the overhead is low.
+            try:
+                await self.revalidate_all_connections()
+            except Exception as exc:
+                logger.error("Error in token revalidation cycle: %s", exc)
+
             # Sleep between cycles (minimum 60s for poll interval, default 1 hour)
             poll_seconds = min(3600, self.settings.sync_interval_hours * 3600)
             try:
                 await asyncio.sleep(poll_seconds)
             except asyncio.CancelledError:
                 break
+
+    async def revalidate_all_connections(self) -> dict[str, int]:
+        """Probe all active OAuth connections to detect Google-side revocations.
+
+        For each active connection whose token is expired, attempts a silent
+        ``get_valid_access_token`` call. If Google returns ``invalid_grant``,
+        ``OAuthService`` deletes all associated API data automatically.
+
+        Returns a summary dict with counts: probed, revoked, errors.
+        """
+        counts = {"probed": 0, "revoked": 0, "errors": 0}
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        from miconte.integrations.youtube.exceptions import InvalidGrantError  # noqa: PLC0415
+
+        for session in create_db_session():
+            stmt = select(OAuthConnection).where(OAuthConnection.is_active.is_(True))
+            connections: list[OAuthConnection] = list(session.execute(stmt).scalars().all())
+
+            for conn in connections:
+                now = datetime.now(UTC)
+                if conn.token_expires_at is not None and conn.token_expires_at > now:
+                    continue  # Token is still valid — no probe needed
+
+                counts["probed"] += 1
+                crypto = TokenEncryptionService(
+                    primary_key=self.settings.token_encryption_key.get_secret_value(),
+                    primary_key_id=self.settings.token_encryption_key_id,
+                )
+                oauth_svc = OAuthService(
+                    session=session,
+                    settings=self.settings,
+                    crypto_service=crypto,
+                )
+                try:
+                    await oauth_svc.get_valid_access_token(
+                        user_id=conn.user_id,
+                        external_channel_id=conn.external_channel_id,
+                    )
+                except InvalidGrantError:
+                    counts["revoked"] += 1
+                    logger.info(
+                        "Revalidation: invalid_grant detected for channel %s; data deleted",
+                        conn.external_channel_id,
+                    )
+                except Exception as exc:
+                    counts["errors"] += 1
+                    logger.warning(
+                        "Revalidation probe failed for channel %s: %s",
+                        conn.external_channel_id,
+                        exc,
+                    )
+
+        return counts
 
     async def _check_and_run_due_channels(self) -> None:
         """Identify authorized channels whose last sync exceeds interval_hours."""

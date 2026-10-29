@@ -9,6 +9,10 @@ from sqlalchemy.orm import Session
 from miconte.models.user import OAuthConnection, User
 
 
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
 class UserRepository:
     """Repository handling User and OAuthConnection persistence."""
 
@@ -22,12 +26,14 @@ class UserRepository:
         hashed_password: str,
         full_name: str | None = None,
         is_active: bool = True,
+        google_sub: str | None = None,
     ) -> User:
         user = User(
-            email=email.strip().lower(),
+            email=_normalize_email(email),
             hashed_password=hashed_password,
             full_name=full_name,
             is_active=is_active,
+            google_sub=google_sub,
         )
         self.session.add(user)
         self.session.flush()
@@ -37,7 +43,11 @@ class UserRepository:
         return self.session.get(User, user_id)
 
     def get_by_email(self, email: str) -> User | None:
-        stmt = select(User).where(User.email == email.strip().lower())
+        stmt = select(User).where(User.email == _normalize_email(email))
+        return self.session.execute(stmt).scalar_one_or_none()
+
+    def get_by_google_sub(self, sub: str) -> User | None:
+        stmt = select(User).where(User.google_sub == sub)
         return self.session.execute(stmt).scalar_one_or_none()
 
     def upsert_oauth_connection(

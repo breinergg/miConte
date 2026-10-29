@@ -2,10 +2,14 @@
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+if TYPE_CHECKING:
+    from miconte.models.session import UserSession
 
 from miconte.persistence.base import Base
 
@@ -25,6 +29,12 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    google_sub: Mapped[str | None] = mapped_column(
+        String(128),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -39,6 +49,11 @@ class User(Base):
     )
 
     # Relationships
+    sessions: Mapped[list["UserSession"]] = relationship(
+        "UserSession",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     oauth_connections: Mapped[list["OAuthConnection"]] = relationship(
         "OAuthConnection",
         back_populates="user",

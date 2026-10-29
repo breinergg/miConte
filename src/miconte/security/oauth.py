@@ -43,7 +43,16 @@ class OAuthTransaction:
 
 
 class OAuthTransactionStore:
-    """Thread-safe in-memory store for OAuth transactions enforcing single-use and PKCE."""
+    """Thread-safe in-memory store for OAuth transactions enforcing single-use and PKCE.
+
+    Single-process limitation
+    -------------------------
+    This store uses an in-memory dict and is not replicated across workers.
+    A YouTube authorization flow that initiates on worker A will fail if the
+    callback arrives on worker B. See also LoginTransactionStore in
+    security/login.py for the same constraint. Multi-worker deployments require
+    sticky-session routing or an external shared store (e.g. Redis).
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()

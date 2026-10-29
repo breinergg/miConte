@@ -811,9 +811,34 @@ class SyncService:
                 0,
             )
 
-        # 3. Retrieve already processed report IDs to prevent redundant downloads
-        processed_ids = self.analysis_repo.get_processed_reporting_report_ids(channel.id)
-        new_reports = [r for r in reports if r.report_id not in processed_ids]
+        # 3. Identify reports that have not been ingested yet, including restatement detection.
+        # A restatement is a new YouTube report_id covering the same (start, end) period with a
+        # strictly newer create_time. Only the newer version is allowed through; equal or older
+        # create_times for an already-ingested period are skipped to avoid downgrading data.
+        processed_ids = self.analysis_repo.get_processed_report_ids(channel.id)
+        new_reports = []
+        restatement_ids: set[str] = set()  # report_ids that replace an already-ingested period
+        for rep in reports:
+            if rep.report_id in processed_ids:
+                # Exact same report already committed — skip unconditionally.
+                continue
+            if rep.start_time and rep.end_time:
+                existing = self.analysis_repo.get_latest_ingestion_for_period(
+                    channel.id, rep.start_time, rep.end_time, job_id=rep.job_id
+                )
+                if existing is not None:
+                    # An ingestion exists for this period. Allow only if this report is strictly
+                    # newer; otherwise skip to avoid replacing good data with an older version.
+                    if (
+                        rep.create_time is not None
+                        and existing.report_create_time is not None
+                        and rep.create_time > existing.report_create_time
+                    ):
+                        new_reports.append(rep)
+                        restatement_ids.add(rep.report_id)
+                    # If either create_time is absent we cannot compare versions; skip safely.
+                    continue
+            new_reports.append(rep)
 
         if not new_reports:
             return (
@@ -829,7 +854,7 @@ class SyncService:
             )
 
         total_rows_updated = 0
-        newly_processed_ids: list[str] = []
+        newly_processed_count = 0
 
         for rep in new_reports:
             download_url = rep.download_url
@@ -853,6 +878,21 @@ class SyncService:
                 )
                 continue
 
+            # For restatements, clear existing reach data for the period before inserting
+            # the new rows. This prevents metric_date rows absent from the newer report
+            # version from retaining stale impressions from the superseded version.
+            if rep.report_id in restatement_ids and rep.start_time and rep.end_time:
+                period_start_date = rep.start_time.date()
+                # end_time is exclusive per the YouTube Reporting API contract: first
+                # extract the date, then subtract 1 to get the last covered metric_date.
+                period_end_date = rep.end_time.date() - timedelta(days=1)
+                self.metrics_repo.clear_reach_metrics_for_channel_period(
+                    channel_id=channel.id,
+                    start_date=period_start_date,
+                    end_date=period_end_date,
+                )
+
+            rows_for_this_report = 0
             for row in rows:
                 video = self.video_repo.get_by_youtube_id(row.video_id)
                 if not video:
@@ -865,9 +905,22 @@ class SyncService:
                     thumbnail_ctr=row.video_thumbnail_impressions_ctr,
                     reach_source="reporting_api_v1",
                 )
-                total_rows_updated += 1
+                rows_for_this_report += 1
 
-            newly_processed_ids.append(rep.report_id)
+            # Persist the ingestion record only after all rows have been flushed.
+            # Written inside the same transaction as the metrics: if the outer handler
+            # rolls back, this record disappears too — the report will be re-attempted.
+            self.analysis_repo.record_report_ingestion(
+                channel_id=channel.id,
+                report_id=rep.report_id,
+                job_id=rep.job_id,
+                report_period_start=rep.start_time,
+                report_period_end=rep.end_time,
+                report_create_time=rep.create_time,
+                rows_ingested=rows_for_this_report,
+            )
+            total_rows_updated += rows_for_this_report
+            newly_processed_count += 1
 
         self.session.flush()
         return (
@@ -877,7 +930,7 @@ class SyncService:
                 records_processed=total_rows_updated,
                 details=(
                     f"Ingested {total_rows_updated} reach rows across "
-                    f"{len(newly_processed_ids)} report files"
+                    f"{newly_processed_count} report files"
                 ),
             ),
             total_rows_updated,

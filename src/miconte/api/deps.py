@@ -4,12 +4,13 @@ import uuid
 from collections.abc import Generator
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from miconte.core.config import Settings, get_settings
 from miconte.models.user import User
+from miconte.persistence.repositories.session_repo import SessionRepository
 from miconte.persistence.repositories.user_repo import UserRepository
 from miconte.persistence.session import create_db_session
 from miconte.security.crypto import TokenEncryptionService
@@ -79,6 +80,7 @@ SchedulerDep = Annotated[SyncScheduler, Depends(get_scheduler)]
 
 
 def get_current_authenticated_user(
+    request: Request,
     session: DbSessionDep,
     settings: SettingsDep,
     x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
@@ -86,10 +88,11 @@ def get_current_authenticated_user(
     """Resolve authenticated user identity from request context.
 
     Security rules:
-    - In production: X-User-Id header as an identity provider is strictly prohibited
-      to prevent identity spoofing. A verified server-managed session is required.
-    - In development/testing: X-User-Id header is permitted solely for local testing,
-      and is validated against active User records in PostgreSQL.
+    - In production: X-User-Id header is strictly prohibited (HTTP 403).
+      Authentication is via HttpOnly session cookie set by the Google OIDC flow.
+    - In development/testing: X-User-Id header is permitted for local testing,
+      validated against active User records in PostgreSQL. Falls back to the
+      first active user when no header is provided.
     """
     if settings.environment not in ("development", "testing"):
         if x_user_id:
@@ -97,10 +100,23 @@ def get_current_authenticated_user(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="X-User-Id header is strictly prohibited in production environments",
             )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Production user authentication subsystem is not yet configured",
-        )
+        # Production: authenticate via session cookie
+        token = request.cookies.get(settings.session_cookie_name)
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required: valid session cookie missing",
+                headers={"WWW-Authenticate": "Cookie"},
+            )
+        repo = SessionRepository(session)
+        user = repo.get_user_by_token(token)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired or invalid — please log in again",
+                headers={"WWW-Authenticate": "Cookie"},
+            )
+        return user
 
     user_repo = UserRepository(session)
     if x_user_id:

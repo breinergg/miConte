@@ -92,6 +92,21 @@ class VideoRepository:
         like_count: int | None,
         comment_count: int | None,
     ) -> VideoPublicSnapshot:
+        # The schema constraint (like_count IS NULL OR like_count >= 0) does not permit
+        # negative values.  When YouTube returns a negative like_count we must not store
+        # it directly; instead we store NULL and record the original value in anomaly_notes
+        # so the evidence is preserved without violating the constraint.
+        is_anomalous = False
+        anomaly_notes: str | None = None
+        if like_count is not None and like_count < 0:
+            anomaly_notes = (
+                f"Negative like_count received from YouTube API: {like_count}. "
+                "Stored as NULL to satisfy schema constraint. "
+                "Requires technical investigation."
+            )
+            like_count = None
+            is_anomalous = True
+
         stmt = select(VideoPublicSnapshot).where(
             VideoPublicSnapshot.video_id == video_id,
             VideoPublicSnapshot.captured_at == captured_at,
@@ -104,12 +119,16 @@ class VideoRepository:
                 view_count=view_count,
                 like_count=like_count,
                 comment_count=comment_count,
+                is_anomalous=is_anomalous,
+                anomaly_notes=anomaly_notes,
             )
             self.session.add(snapshot)
         else:
             snapshot.view_count = view_count
             snapshot.like_count = like_count
             snapshot.comment_count = comment_count
+            snapshot.is_anomalous = is_anomalous
+            snapshot.anomaly_notes = anomaly_notes
 
         self.session.flush()
         return snapshot

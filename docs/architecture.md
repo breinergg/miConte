@@ -74,8 +74,17 @@ flowchart TB
 * **Límites:** Convierte modelos ORM en objetos de dominio o `pandas.DataFrame` antes de entregarlos al motor estadístico, evitando que los objetos de sesión de SQLAlchemy se filtren hacia la capa analítica.
 * **Esquema Relacional Especializado (Fase 3 / ADR-0005):**
   * **Seguridad y Usuarios (`users`, `oauth_connections`):**
-    * Aislamiento multi-usuario estricto mediante claves foráneas directas (`user_id`).
+    * Aislamiento multi-usuario estricto mediante claves foráneas directas (`user_id`). Se prohíbe taxativamente la agregación de datos entre diferentes propietarios de contenido (el consentimiento individual no constituye una excepción). La agregación solo se permite entre canales bajo el **mismo Propietario de Contenido (*Content Owner*) reconocido por YouTube conforme a sus acuerdos de licencia aplicables** (la vinculación de canales a la misma cuenta de miConte no demuestra ni satisface este requisito) y los resultados agregados permitidos deben ser visibles única y exclusivamente por dicho propietario.
     * **Servicio Criptográfico Operativo (Fase 4 / ADR-0006):** Las columnas `encrypted_access_token` y `encrypted_refresh_token` almacenan exclusivamente texto cifrado con **AES-256-GCM** generado por `TokenEncryptionService`. Cada credencial cuenta con un nonce único de 96 bits (`os.urandom(12)`), una envoltura versionada `v1:<key_id>:<nonce>:<ciphertext+tag>` y vinculación de contexto mediante datos autenticados asociados (*AAD*: `user_id:platform:channel_id:credential_kind`), impidiendo el trasplante o manipulación de credenciales. La clave maestra se suministra fuera de la base de datos vía `MICONTE_TOKEN_ENCRYPTION_KEY`.
+  * **Políticas de Retención, Verificación Periódica y Eliminación Diferenciada (docs/youtube-api-policy-compliance.md):**
+    * *Estadísticas privadas autorizadas (>30 días):* Retenidas mientras subsista la autorización válida, exigiendo verificar periódicamente (al menos cada 30 días) la vigencia de la autorización y la disponibilidad de los videos en YouTube.
+    * *Estadísticas públicas sin autorización:* Límite máximo estricto de 30 días sin refresco ("actualizar o eliminar en 30 días").
+    * *Metadatos descriptivos de catálogo:* Actualización o eliminación en 30 días y verificación periódica de disponibilidad.
+    * *Plazos específicos de eliminación:*
+      1. *Solicitud del usuario o baja:* Plazo máximo e improrrogable de **7 días calendario** (la regla de 30 días no aplica bajo ninguna circunstancia a solicitudes de supresión del usuario).
+      2. *Desconexión en miConte (`/disconnect`):* Purga **inmediata** de tokens cifrados y cese de peticiones; eliminación de datos de API obtenidos bajo ese consentimiento lo antes posible y en un máximo de **7 días calendario** (automática, sin segunda solicitud del usuario).
+      3. *Revocación en configuración de Google:* Cese e invalidación de credenciales **inmediatamente tras detección o notificación**; eliminación de datos de API relacionados lo antes posible y en un máximo de **30 días calendario desde la revocación del consentimiento** (la detección tardía no reinicia ni amplía ese plazo).
+      4. *Imposibilidad de renovar/verificar autorización:* Cese inmediato y ventana de **30 días** para renovación o eliminación definitiva de datos de API no verificados.
   * **Catálogo Descriptivo (`channels`, `videos`):** Metadatos estables de canales y videos. Incluye `channels.uploads_playlist_id` para enumeración paginada sin consumir cuota de `search.list` y restricción `CHECK (duration_seconds >= 0)`.
   * **Instantáneas Públicas (`channel_public_snapshots`, `video_public_snapshots`):** Capturas históricas acumuladas en `captured_at`. Distingue nítidamente entre ausencia (`NULL`, creador ocultó o desactivó la estadística) y cero (`0`). Claves compuestas únicas `(channel_id, captured_at)` y `(video_id, captured_at)`.
   * **Métricas Analíticas Privadas por Periodo (`channel_daily_metrics`, `video_daily_metrics`, `video_period_metrics`):**
@@ -110,9 +119,11 @@ flowchart TB
 
 ### 2.5 Motor Estadístico (`miconte.statistics`)
 * **Responsabilidad:** Ejecutar todos los cálculos matemáticos y estadísticos de forma determinista y en memoria utilizando `pandas`, `NumPy`, `SciPy` y `statsmodels` (y `scikit-learn` únicamente cuando exista justificación). Calcula métricas derivadas (CTR, APV, ER, $V_{24h}$), valida tamaños muestrales ($N$), aplica pruebas de normalidad (`shapiro`, `kstest`), calcula intervalos de confianza al 95% ($\text{CI}_{95\%}$), ejecuta comparaciones de cohortes (`mannwhitneyu`, `wilcoxon`, `ttest_ind`) y etiqueta datos ausentes o censurados por la derecha.
-* **Límites Estrictos (Aislamiento Total):**
+* **Límites Estrictos y Cumplimiento de Políticas (Aislamiento Total):**
   * **PROHIBIDO** importar `fastapi`, `sqlalchemy`, `httpx`, `ollama` o cualquier librería de red/base de datos.
   * Funciona como una librería pura: recibe datos estructurados en memoria y devuelve resultados tipados deterministas con sus metadatos estadísticos.
+  * **Rotulado Obligatorio de Métricas Propias vs. Oficiales:** Todo indicador calculado por el motor estadístico debe rotularse como `source: "miconte_derived"`, distinguiéndose nítidamente de las métricas crudas de YouTube (`source: "youtube_official"`).
+  * **Condición Previa para la Fase 6:** La Fase 6 implementará y verificará sus métodos analíticos empleando exclusivamente **datos sintéticos (*mock data*) y muestras locales de prueba**. El cálculo de métricas derivadas sobre datos reales de canales de YouTube en producción queda formalmente supeditado a la aprobación previa de cumplimiento de Google Cloud (*YouTube Derived Metrics Compliance Review*).
 
 ### 2.6 Recomendaciones Deterministas (`miconte.recommendations`)
 * **Responsabilidad:** Evaluar las salidas del Motor Estadístico contra un catálogo de reglas deterministas y umbrales configurables para emitir diagnósticos y sugerencias accionables.

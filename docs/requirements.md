@@ -52,6 +52,19 @@ Este documento especifica los requisitos funcionales (RF), los requisitos no fun
   * El código TypeScript/Angular debe compilar en modo estricto (`strict: true`) sin errores (`ng build`).
   * Toda fórmula estadística debe contar con pruebas unitarias en `pytest` que verifiquen casos nominales, bordes (ceros, vacíos, $N=1$) y restricciones de dominio.
 * **RNF-07 (Simplicidad Operativa):** La arquitectura debe ejecutarse localmente como un monolito modular en Python + SPA Angular + instancia PostgreSQL (`miconte_db`), sin requerir orquestadores complejos ni servicios en la nube de pago obligatorios.
+* **RNF-08 (Cumplimiento de Políticas de YouTube API, Retención Diferenciada y Plazos Específicos):**
+  * **Categorización de Retención y Verificación Periódica (>30 Días):**
+    1. *Estadísticas privadas autorizadas (>30 días):* Retenidas para análisis longitudinal del creador mientras subsista la autorización válida, con verificación periódica (al menos cada 30 días) de credenciales activas y de disponibilidad pública de los videos en YouTube.
+    2. *Estadísticas públicas no autorizadas por el propietario:* Sujetas a la regla estricta de actualizar o eliminar en un plazo máximo de 30 días calendario sin refresco contra la API.
+    3. *Metadatos descriptivos de catálogo:* Sujetos a actualización o eliminación en 30 días y comprobación periódica de disponibilidad de recursos.
+  * **Plazos Específicos de Eliminación según Evento Detonante:**
+    1. *Solicitudes de eliminación del usuario / baja:* Eliminación definitiva e irreversible de todos los datos del usuario lo antes posible y en un plazo máximo e improrrogable de **7 días calendario** (la regla de 30 días no aplica bajo ninguna circunstancia a solicitudes de eliminación del usuario).
+    2. *Desconexión de consentimiento en miConte (`/disconnect`):* Purga **inmediata** de tokens en `oauth_connections`, revocación remota y cese de llamadas; eliminación de datos de API obtenidos bajo ese consentimiento lo antes posible y en un máximo de **7 días calendario** (automática, sin segunda solicitud del usuario).
+    3. *Revocación en configuración de Google:* Cese e invalidación de credenciales **inmediatamente tras detección o notificación**; eliminación de datos de API relacionados lo antes posible y en un máximo de **30 días calendario desde la revocación del consentimiento** (la detección tardía no reinicia ni amplía ese plazo).
+    4. *Imposibilidad de renovar o verificar autorización:* Cese inmediato y ventana de **30 días** para renovación o eliminación definitiva de datos de API no verificados.
+  * **Prohibición de Combinar Datos y Reglas Estrictas de Agregación:** Queda prohibido combinar, consolidar o agregar datos de API procedentes de distintos propietarios de contenido (el consentimiento individual no constituye una excepción). La agregación solo se permite entre canales que estén bajo el **mismo Propietario de Contenido (*Content Owner*) reconocido por YouTube conforme a sus acuerdos de licencia aplicables** (la vinculación en miConte **no** presupone este requisito) y sus resultados deben restringirse exclusivamente a dicho propietario.
+  * **Rotulado de Métricas Derivadas:** Toda métrica derivada calculada por miConte debe distinguirse expresamente de las métricas oficiales de YouTube (`source: "miconte_derived"` vs `source: "youtube_official"`).
+  * **Condición Previa para Fase 6:** Los métodos del motor estadístico se validan con datos sintéticos en la Fase 6; el uso de datos reales de la API para generar métricas derivadas en producción exige la previa verificación oficial de Google Cloud.
 
 ---
 
@@ -65,3 +78,4 @@ Este documento especifica los requisitos funcionales (RF), los requisitos no fun
 | **CA-MVP-04** | La aplicación web y la API funcionan de principio a fin con el proveedor de LLM deshabilitado (`MICONTE_LLM_PROVIDER=none`). | Pruebas de integración de API y de extremo a extremo con Playwright. |
 | **CA-MVP-05** | Cuando se activa un proveedor de LLM (Ollama o mock en tests), si el proveedor falla o tarda más del *timeout*, la API devuelve igualmente las métricas y recomendaciones deterministas con un indicador de estado de IA degradado. | Test de integración simulando caída/timeout de Ollama (`HTTPX` mock). |
 | **CA-MVP-06** | Ninguna recomendación ni etiqueta de la interfaz utiliza vocabulario causal prohibido ("causó", "provocó", "es la razón de"). | Revisión de plantillas de recomendación y pruebas de regresión sobre el catálogo de reglas. |
+| **CA-MVP-07** | El sistema impone aislamiento multi-inquilino absoluto (sin agregaciones cruzadas entre propietarios distintos) y garantiza la eliminación definitiva de datos dentro de 7 días calendario ante solicitud del usuario. | Auditoría de endpoints, pruebas de aislamiento IDOR y verificación documental con `docs/youtube-api-policy-compliance.md`. |

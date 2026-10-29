@@ -1,6 +1,7 @@
 """High-level orchestration service for YouTube OAuth 2.0 authorization and credentials."""
 
 import contextlib
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,6 +13,7 @@ from miconte.core.config import Settings
 from miconte.integrations.youtube.data_v3 import YouTubeDataClient
 from miconte.integrations.youtube.dto import DisconnectResultDTO, YouTubeChannelDTO
 from miconte.integrations.youtube.exceptions import (
+    InvalidGrantError,
     OAuthError,
     ResourceNotFoundError,
 )
@@ -30,6 +32,8 @@ from miconte.security.oauth import (
     revoke_oauth_token,
     verify_state_token,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OAuthService:
@@ -229,12 +233,25 @@ class OAuthService:
                 conn.encrypted_refresh_token, aad=aad_refresh
             )
 
-            new_tokens = await refresh_oauth_token(
-                refresh_token=refresh_token_plain,
-                client_id=self.settings.youtube_client_id,
-                client_secret=self.settings.youtube_client_secret.get_secret_value(),
-                http_client=self.http_client,
-            )
+            try:
+                new_tokens = await refresh_oauth_token(
+                    refresh_token=refresh_token_plain,
+                    client_id=self.settings.youtube_client_id,
+                    client_secret=self.settings.youtube_client_secret.get_secret_value(),
+                    http_client=self.http_client,
+                )
+            except InvalidGrantError:
+                # Google-side revocation detected: purge credentials and all API data.
+                conn.is_active = False
+                conn.encrypted_access_token = None
+                conn.encrypted_refresh_token = None
+                conn.token_expires_at = None
+                self._delete_channel_api_data(
+                    user_id=user_id,
+                    youtube_channel_id=external_channel_id,
+                )
+                self.session.commit()
+                raise
 
             aad_access = build_token_aad(
                 user_id=str(user_id),
@@ -331,11 +348,16 @@ class OAuthService:
                         "Remote revocation request was rejected by Google; "
                         "local credentials purged safely"
                     )
-            except Exception:
+            except Exception as exc:
                 remote_revoked = False
                 details = (
                     "Transport error communicating with Google revocation endpoint; "
                     "local credentials purged safely"
+                )
+                logger.warning(
+                    "Remote revocation failed for channel %s: %s",
+                    external_channel_id,
+                    exc,
                 )
         else:
             details = (
@@ -348,6 +370,11 @@ class OAuthService:
         conn.encrypted_access_token = None
         conn.encrypted_refresh_token = None
         conn.token_expires_at = None
+
+        # Delete all API data associated with this consent: channel, videos, metrics,
+        # snapshots, sync_runs, analysis_runs, recommendations, reporting_ingestions.
+        self._delete_channel_api_data(user_id=user_id, youtube_channel_id=external_channel_id)
+
         self.session.commit()
 
         return DisconnectResultDTO(
@@ -356,6 +383,25 @@ class OAuthService:
             remote_revoked=remote_revoked,
             details=details,
         )
+
+    def _delete_channel_api_data(
+        self,
+        user_id: uuid.UUID,
+        youtube_channel_id: str,
+    ) -> bool:
+        """Delete the Channel row and all cascading API data for the revoked consent.
+
+        Returns True if a channel was found and deleted, False if no channel existed.
+        SQLAlchemy ORM cascades handle: videos, public_snapshots, daily_metrics,
+        sync_runs, analysis_runs (→ recommendations). The DB-level FK ondelete=CASCADE
+        on reporting_report_ingestions handles that table without an ORM relationship.
+        """
+        channel = self.channel_repo.get_by_youtube_id(youtube_channel_id)
+        if channel is None or channel.user_id != user_id:
+            return False
+        self.session.delete(channel)
+        self.session.flush()
+        return True
 
     def get_connection_status(
         self,

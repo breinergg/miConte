@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -130,6 +131,18 @@ class VideoPublicSnapshot(Base):
         BigInteger,
         nullable=True,
         comment="NULL if comments are disabled; distinguished from 0",
+    )
+
+    is_anomalous: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        comment="True when a metric value violated the API contract (e.g. negative like_count)",
+    )
+    anomaly_notes: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Original anomalous value(s) and diagnosis; preserved for audit when NULL stored",
     )
 
     created_at: Mapped[datetime] = mapped_column(
