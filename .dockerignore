@@ -1,0 +1,39 @@
+# Build artefacts and caches
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Secrets — never in the image
+.env
+.env.*
+!.env.example
+client_secret*.json
+*token*.json
+
+# Frontend and Node
+frontend/
+node_modules/
+
+# Version control
+.git/
+.gitignore
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Alembic versions are included (needed for explicit migrations)
+# but Python caches inside them are not
+alembic/**/__pycache__/
+
+# Test files — not needed at runtime
+tests/

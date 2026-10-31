@@ -168,9 +168,14 @@ class MetricsRepository:
             record.shares = shares
             record.subscribers_gained = subscribers_gained
             record.subscribers_lost = subscribers_lost
-            record.thumbnail_impressions = thumbnail_impressions
-            record.thumbnail_ctr = thumbnail_ctr
-            record.reach_source = reach_source
+            # Preserve existing reach data when caller has none to provide.
+            # upsert_video_daily_reach() is the authoritative path for reach fields.
+            if thumbnail_impressions is not None:
+                record.thumbnail_impressions = thumbnail_impressions
+            if thumbnail_ctr is not None:
+                record.thumbnail_ctr = thumbnail_ctr
+            if reach_source is not None:
+                record.reach_source = reach_source
             record.is_anomalous = is_anomalous
             record.anomaly_notes = anomaly_notes
 

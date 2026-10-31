@@ -694,22 +694,32 @@ class TestVideoAnalytics:
 
 
 class TestComplianceGate:
-    """Verify the analytics_real_data_enabled gate returns 503 when disabled."""
+    """Verify the analytics_real_data_enabled gate returns 503 when disabled.
 
-    def test_channel_summary_returns_503_when_gate_disabled(
+    Channel summary (/summary) is intentionally EXEMPT from the gate: it returns
+    stored YouTube Data API metadata (title, thumbnail, public snapshot counts) that
+    do not constitute derived analytics and may be shown regardless of gate state.
+    All other analytics endpoints (/analytics, /videos, /recommendations, /analysis/run,
+    /ai/interpret) continue to return 503 when the gate is closed.
+    """
+
+    def test_channel_summary_returns_200_when_gate_disabled(
         self,
         client_gate_disabled: TestClient,
         test_user: User,
         test_channel: Channel,
         db_session: Session,
     ) -> None:
+        """Channel summary (stored API metadata) is exempt from the analytics gate."""
         db_session.commit()
         resp = client_gate_disabled.get(
             f"/api/v1/channels/{test_channel.id}/summary",
             headers=_headers(test_user),
         )
-        assert resp.status_code == 503
-        assert "MICONTE_ANALYTICS_REAL_DATA_ENABLED" in resp.json()["detail"]
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["channel_id"] == str(test_channel.id)
+        assert "compliance_notice" in body
 
     def test_run_analysis_returns_503_when_gate_disabled(
         self,

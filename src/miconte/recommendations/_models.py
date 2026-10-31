@@ -45,8 +45,17 @@ class RecommendationSignal:
     channel_er_median: float | None = None
     channel_velocity_median: float | None = None
 
+    # Snapshot-based fields (Path A — cumulative counts from YouTube Data API)
+    snapshot_view_count: int | None = None
+    """Cumulative view count from the latest VideoPublicSnapshot."""
+    channel_view_count_median: float | None = None
+    """Median view count across all channel videos with snapshot data."""
+
     n_videos_baseline: int = 0
     """Number of channel videos with data used to compute baselines."""
+
+    data_source: str = "daily"
+    """Origin of the metrics: 'daily' (Analytics API) or 'snapshot' (Data API)."""
 
     period_start: date | None = None
     period_end: date | None = None

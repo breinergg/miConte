@@ -228,7 +228,53 @@ def test_sync_channel_full_flow_with_videos_and_snapshots(
         # 4. Analytics reports.query endpoint
         if "/v2/reports" in url_str:
             dims = request.url.params.get("dimensions", "")
-            if "day" in dims:
+            if "day" in dims and "video" in dims:
+                # Video daily batch report (day,video)
+                return httpx.Response(
+                    200,
+                    json={
+                        "columnHeaders": [
+                            {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+                            {"name": "video", "columnType": "DIMENSION", "dataType": "STRING"},
+                            {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+                            {
+                                "name": "estimatedMinutesWatched",
+                                "columnType": "METRIC",
+                                "dataType": "INTEGER",
+                            },
+                            {
+                                "name": "averageViewDuration",
+                                "columnType": "METRIC",
+                                "dataType": "INTEGER",
+                            },
+                            {
+                                "name": "averageViewPercentage",
+                                "columnType": "METRIC",
+                                "dataType": "FLOAT",
+                            },
+                            {
+                                "name": "subscribersGained",
+                                "columnType": "METRIC",
+                                "dataType": "INTEGER",
+                            },
+                            {
+                                "name": "subscribersLost",
+                                "columnType": "METRIC",
+                                "dataType": "INTEGER",
+                            },
+                            {"name": "likes", "columnType": "METRIC", "dataType": "INTEGER"},
+                            {"name": "comments", "columnType": "METRIC", "dataType": "INTEGER"},
+                            {"name": "shares", "columnType": "METRIC", "dataType": "INTEGER"},
+                        ],
+                        "rows": [
+                            ["2026-10-20", v1_id, 250, 600, 144, 48.5, 5, 1, 20, 3, 2],
+                            ["2026-10-20", v2_id, 310, 750, 145, 50.0, 8, 1, 30, 4, 3],
+                            ["2026-10-21", v1_id, 300, 720, 144, 49.0, 6, 1, 22, 4, 2],
+                            ["2026-10-21", v2_id, 350, 850, 146, 52.0, 10, 0, 35, 5, 4],
+                        ],
+                    },
+                )
+            elif "day" in dims:
                 # Channel daily report
                 return httpx.Response(
                     200,
@@ -293,7 +339,7 @@ def test_sync_channel_full_flow_with_videos_and_snapshots(
                         ],
                     },
                 )
-            if "video" in dims:
+            elif "video" in dims:
                 # Video period aggregates
                 return httpx.Response(
                     200,
@@ -454,16 +500,25 @@ def test_sync_channel_full_flow_with_videos_and_snapshots(
         )
         assert len(period_metrics) == 2
 
-        # Verify Reporting reach updated in VideoDailyMetric
-        v1_daily = (
+        # Verify VideoDailyMetrics from batched day,video query
+        v1_daily_rows = (
             db_session.query(VideoDailyMetric)
-            .filter_by(video_id=vids_dict[v1_id].id, metric_date=date(2026, 10, 20))
-            .first()
+            .filter_by(video_id=vids_dict[v1_id].id)
+            .order_by(VideoDailyMetric.metric_date.asc())
+            .all()
         )
-        assert v1_daily is not None
-        assert v1_daily.thumbnail_impressions == 10000
-        assert v1_daily.thumbnail_ctr == 0.100
-        assert v1_daily.reach_source == "reporting_api_v1"
+        assert len(v1_daily_rows) >= 2
+        v1_oct20 = next(
+            r for r in v1_daily_rows if r.metric_date == date(2026, 10, 20)
+        )
+        assert v1_oct20.views == 250
+        assert v1_oct20.likes == 20
+
+        # Verify Reporting reach updated in VideoDailyMetric
+        # (reach stage writes on top of the row created by video daily stage)
+        assert v1_oct20.thumbnail_impressions == 10000
+        assert v1_oct20.thumbnail_ctr == 0.100
+        assert v1_oct20.reach_source == "reporting_api_v1"
 
     asyncio.run(_run())
 

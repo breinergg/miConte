@@ -187,6 +187,8 @@ class RecommendationsRunData:
     n_rules_triggered: int
     recommendations: list[RecommendationData]
     compliance_notice: str
+    data_source: str = "daily"
+    """'daily' (Path B — Analytics API) or 'snapshot' (Path A — Data API)."""
 
 
 @dataclass
@@ -256,8 +258,15 @@ class AnalyticsService:
         user_id: uuid.UUID,
         channel_id: uuid.UUID,
     ) -> ChannelSummaryData:
-        """Return channel metadata with the latest public snapshot."""
-        self._require_real_data_enabled()
+        """Return channel metadata with the latest public snapshot.
+
+        Channel title, thumbnail URL and public snapshot counts (views, subscribers,
+        video count) are stored data originally sourced from YouTube Data API v3 and
+        do NOT constitute derived analytics. This method is intentionally exempt from
+        the analytics_real_data_enabled gate so the channel header remains visible
+        even while the analytics compliance gate is closed.
+        """
+        # No _require_real_data_enabled() here: this returns stored API metadata only.
         channel = self._verify_channel(user_id, channel_id)
         snap = self._channel_repo.get_latest_public_snapshot(channel_id)
 
@@ -394,13 +403,21 @@ class AnalyticsService:
     ) -> RecommendationsRunData:
         """Run the full recommendations analysis for a channel and persist results.
 
+        Dual-path strategy:
+          **Path B** (preferred) — daily metrics from YouTube Analytics API v2.
+            Uses video_daily_metrics to compute APV, CTR, ER, NSC_1k, velocity_24h.
+            Evaluates all rules R01–R08.
+          **Path A** (fallback) — cumulative snapshots from YouTube Data API v3.
+            Activates automatically when Path B yields 0 videos with daily data.
+            Computes ER from (likes + comments) / views and compares view counts
+            across the channel.  Only rules that accept snapshot data fire
+            (R05–R08 and R06); R01–R04 return triggered=False gracefully.
+
         Steps:
-        1. Fetch all videos + their daily metrics for the last 30 days.
-        2. Compute per-video metrics (APV, CTR, ER, NSC_1k, velocity_24h).
-        3. Compute channel baseline medians across all videos with data.
-        4. Build a RecommendationSignal per video and evaluate rules.
-        5. Persist AnalysisRun + triggered Recommendations.
-        6. Return a summary.
+        1. Attempt Path B: fetch daily metrics for the last 30 days.
+        2. If Path B yields 0 videos → fall back to Path A (snapshot-based).
+        3. Build RecommendationSignal per video, evaluate rules.
+        4. Persist AnalysisRun + triggered Recommendations.
         """
         self._require_real_data_enabled()
         self._verify_channel(user_id, channel_id)
@@ -409,7 +426,7 @@ class AnalyticsService:
 
         videos = self._video_repo.get_all_videos_for_channel(channel_id)
 
-        # Compute per-video aggregate metrics over the period
+        # ── Path B: daily metrics ────────────────────────────────────────────
         video_metrics: list[dict[str, Any]] = []
         for video in videos:
             daily = self._metrics_repo.list_video_daily_metrics(
@@ -421,9 +438,26 @@ class AnalyticsService:
             metrics["video_id"] = video.id
             video_metrics.append(metrics)
 
+        if video_metrics:
+            return self._run_path_b(
+                channel_id, videos, video_metrics, period_start, period_end,
+            )
+
+        # ── Path A: snapshot fallback ────────────────────────────────────────
+        return self._run_path_a(channel_id, videos, period_start, period_end)
+
+    # ── Path B (daily metrics) ───────────────────────────────────────────────
+
+    def _run_path_b(
+        self,
+        channel_id: uuid.UUID,
+        videos: list[Video],
+        video_metrics: list[dict[str, Any]],
+        period_start: date,
+        period_end: date,
+    ) -> RecommendationsRunData:
         n_videos = len(video_metrics)
 
-        # Compute channel baseline medians (for comparison rules)
         channel_apv_median = _median_of(
             [m["apv"] for m in video_metrics if m.get("apv") is not None]
         )
@@ -433,7 +467,6 @@ class AnalyticsService:
         channel_er_median = _median_of(
             [m["er"] for m in video_metrics if m.get("er") is not None]
         )
-        # velocity_24h baseline: median of first-day raw views
         first_day_views = [
             m["first_day_views"]
             for m in video_metrics
@@ -445,7 +478,6 @@ class AnalyticsService:
             else None
         )
 
-        # Persist analysis run
         analysis_run = self._analysis_repo.start_analysis_run(
             channel_id=channel_id,
             analysis_type="cohort_baseline",
@@ -453,6 +485,7 @@ class AnalyticsService:
                 "period_start": period_start.isoformat(),
                 "period_end": period_end.isoformat(),
                 "n_videos_analyzed": n_videos,
+                "data_source": "daily",
             },
         )
 
@@ -462,7 +495,6 @@ class AnalyticsService:
         for vm in video_metrics:
             vid = vm["video_id"]
 
-            # Normalize velocity: video's first-day views / channel median first-day views
             velocity_24h: float | None = None
             if (
                 vm.get("first_day_views") is not None
@@ -484,6 +516,7 @@ class AnalyticsService:
                 channel_er_median=channel_er_median,
                 channel_velocity_median=channel_velocity_median,
                 n_videos_baseline=n_videos,
+                data_source="daily",
                 period_start=period_start,
                 period_end=period_end,
             )
@@ -521,6 +554,7 @@ class AnalyticsService:
             summary_results={
                 "n_videos_analyzed": n_videos,
                 "n_rules_triggered": n_triggered,
+                "data_source": "daily",
                 "channel_apv_median": channel_apv_median,
                 "channel_ctr_median": channel_ctr_median,
                 "channel_er_median": channel_er_median,
@@ -535,6 +569,123 @@ class AnalyticsService:
             n_rules_triggered=n_triggered,
             recommendations=all_recommendations,
             compliance_notice=COMPLIANCE_NOTICE,
+            data_source="daily",
+        )
+
+    # ── Path A (snapshot fallback) ───────────────────────────────────────────
+
+    def _run_path_a(
+        self,
+        channel_id: uuid.UUID,
+        videos: list[Video],
+        period_start: date,
+        period_end: date,
+    ) -> RecommendationsRunData:
+        snapshots = self._video_repo.get_latest_snapshots_for_channel(channel_id)
+        snap_by_video = {s.video_id: s for s in snapshots}
+
+        snapshot_data: list[dict[str, Any]] = []
+        for video in videos:
+            snap = snap_by_video.get(video.id)
+            if snap is None or snap.view_count is None or snap.view_count <= 0:
+                continue
+
+            likes = snap.like_count or 0
+            comments = snap.comment_count or 0
+            er = (likes + comments) / snap.view_count
+
+            snapshot_data.append({
+                "video_id": video.id,
+                "view_count": snap.view_count,
+                "er": er,
+            })
+
+        n_videos = len(snapshot_data)
+
+        channel_er_median = _median_of(
+            [sd["er"] for sd in snapshot_data if sd["er"] is not None]
+        )
+        channel_view_count_median = _median_of(
+            [float(sd["view_count"]) for sd in snapshot_data]
+        )
+
+        analysis_run = self._analysis_repo.start_analysis_run(
+            channel_id=channel_id,
+            analysis_type="snapshot_comparison",
+            parameters={
+                "period_start": period_start.isoformat(),
+                "period_end": period_end.isoformat(),
+                "n_videos_analyzed": n_videos,
+                "data_source": "snapshot",
+            },
+        )
+
+        all_recommendations: list[RecommendationData] = []
+        n_triggered = 0
+
+        for sd in snapshot_data:
+            vid = sd["video_id"]
+
+            signal = RecommendationSignal(
+                channel_id=channel_id,
+                video_id=vid,
+                er=sd["er"],
+                snapshot_view_count=sd["view_count"],
+                channel_er_median=channel_er_median,
+                channel_view_count_median=channel_view_count_median,
+                n_videos_baseline=n_videos,
+                data_source="snapshot",
+                period_start=period_start,
+                period_end=period_end,
+            )
+
+            results = evaluate_rules(signal)
+            for result in results:
+                if not result.triggered:
+                    continue
+                n_triggered += 1
+                rec = self._analysis_repo.record_recommendation(
+                    analysis_run_id=analysis_run.id,
+                    channel_id=channel_id,
+                    video_id=vid,
+                    rule_code=result.rule_code,
+                    title=result.title,
+                    description=result.description,
+                    priority=result.priority,
+                    metrics_evidence=result.metrics_evidence,
+                )
+                all_recommendations.append(RecommendationData(
+                    recommendation_id=rec.id,
+                    rule_code=rec.rule_code,
+                    title=rec.title,
+                    description=rec.description,
+                    priority=rec.priority,
+                    metrics_evidence=rec.metrics_evidence,
+                    created_at=rec.created_at.isoformat(),
+                    video_id=rec.video_id,
+                ))
+
+        self._analysis_repo.complete_analysis_run(
+            analysis_run.id,
+            status="completed",
+            sample_size_n=n_videos,
+            summary_results={
+                "n_videos_analyzed": n_videos,
+                "n_rules_triggered": n_triggered,
+                "data_source": "snapshot",
+                "channel_er_median": channel_er_median,
+                "channel_view_count_median": channel_view_count_median,
+            },
+        )
+        self._session.commit()
+
+        return RecommendationsRunData(
+            analysis_run_id=analysis_run.id,
+            n_videos_analyzed=n_videos,
+            n_rules_triggered=n_triggered,
+            recommendations=all_recommendations,
+            compliance_notice=COMPLIANCE_NOTICE,
+            data_source="snapshot",
         )
 
     def get_video_analytics(

@@ -23,7 +23,7 @@ import { DecimalPipe, DatePipe } from '@angular/common';
       }
       @case ('no-channel') {
         <app-empty-state
-          icon="🔗"
+          icon="link"
           title="Sin canal conectado"
           description="Conecta tu canal de YouTube para ver los videos." />
       }
@@ -35,12 +35,12 @@ import { DecimalPipe, DatePipe } from '@angular/common';
       @case ('loaded') {
         <div class="page-header">
           <h2>Videos del canal</h2>
-          <span class="count-badge">{{ videos().length }} videos cargados</span>
+          <span class="count-badge">{{ videos().length }} videos</span>
         </div>
 
         @if (videos().length === 0) {
           <app-empty-state
-            icon="🎬"
+            icon="video"
             title="Sin videos"
             description="No se encontraron videos para este canal." />
         } @else {
@@ -56,8 +56,14 @@ import { DecimalPipe, DatePipe } from '@angular/common';
                 </div>
                 @if (video.snapshot) {
                   <div class="video-stats">
-                    <span>{{ video.snapshot.view_count | number }} vistas</span>
-                    <span>{{ video.snapshot.like_count | number }} likes</span>
+                    <span class="stat-item">
+                      <span class="stat-value">{{ video.snapshot.view_count | number }}</span>
+                      <span class="stat-label">vistas</span>
+                    </span>
+                    <span class="stat-item">
+                      <span class="stat-value">{{ video.snapshot.like_count | number }}</span>
+                      <span class="stat-label">likes</span>
+                    </span>
                   </div>
                 } @else {
                   <div class="video-stats">
@@ -85,23 +91,29 @@ import { DecimalPipe, DatePipe } from '@angular/common';
       margin-bottom: 1.25rem;
       flex-wrap: wrap;
     }
-    .page-header h2 { margin: 0; font-size: 1.25rem; color: var(--text-primary); }
+    .page-header h2 {
+      margin: 0;
+      font-size: 1.375rem;
+      font-weight: 700;
+      color: var(--ink);
+    }
     .count-badge {
       font-size: 0.75rem;
-      color: var(--text-tertiary);
-      background: var(--surface-card);
-      padding: 0.2rem 0.5rem;
-      border-radius: 4px;
-      border: 1px solid var(--border-default);
+      font-weight: 500;
+      color: var(--ink-faint);
+      background: var(--card);
+      padding: 0.2rem 0.625rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
     }
 
     .video-list {
       display: flex;
       flex-direction: column;
-      gap: 1px;
-      background: var(--border-default);
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
       overflow: hidden;
     }
     .video-row {
@@ -109,56 +121,76 @@ import { DecimalPipe, DatePipe } from '@angular/common';
       justify-content: space-between;
       align-items: center;
       padding: 0.875rem 1.25rem;
-      background: var(--surface-card);
       cursor: pointer;
       transition: background 0.15s;
       gap: 1rem;
     }
-    .video-row:hover { background: var(--surface-hover); }
+    .video-row:not(:last-child) {
+      border-bottom: 1px solid var(--border);
+    }
+    .video-row:hover { background: var(--accent-subtle); }
     .video-info { min-width: 0; }
     .video-title {
       display: block;
       font-size: 0.875rem;
       font-weight: 500;
-      color: var(--text-primary);
+      color: var(--ink);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .video-meta {
       font-size: 0.75rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
     }
     .video-stats {
       display: flex;
-      gap: 1rem;
-      font-size: 0.8125rem;
-      color: var(--text-secondary);
+      gap: 1.25rem;
       flex-shrink: 0;
     }
-    .no-data { color: var(--text-tertiary); font-style: italic; }
+    .stat-item {
+      display: flex;
+      align-items: baseline;
+      gap: 0.25rem;
+    }
+    .stat-value {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .stat-label {
+      font-size: 0.6875rem;
+      color: var(--ink-faint);
+    }
+    .no-data { color: var(--ink-faint); font-style: italic; font-size: 0.8125rem; }
 
     .load-more-btn {
       display: block;
-      margin: 1rem auto 0;
+      margin: 1.25rem auto 0;
       padding: 0.5rem 1.5rem;
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 6px;
-      color: var(--text-secondary);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--ink-soft);
       cursor: pointer;
       font-size: 0.875rem;
+      font-weight: 500;
+      transition: background 0.15s, border-color 0.15s;
     }
-    .load-more-btn:hover { background: var(--surface-hover); }
+    .load-more-btn:hover {
+      background: var(--accent-subtle);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
     .load-more-btn:disabled { opacity: 0.5; cursor: default; }
 
     .error-banner {
       padding: 1rem 1.25rem;
-      background: var(--surface-error);
-      border: 1px solid var(--border-error);
-      border-radius: 8px;
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      border-radius: var(--radius);
     }
-    .error-banner p { margin: 0; font-size: 0.875rem; color: var(--text-primary); }
+    .error-banner p { margin: 0; font-size: 0.875rem; color: var(--ink); }
   `],
 })
 export class VideosComponent implements OnInit {

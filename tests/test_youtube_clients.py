@@ -319,20 +319,33 @@ def test_analytics_client_query_report_success() -> None:
     asyncio.run(_run())
 
 
-def test_analytics_client_rejects_unsupported_dimensions_locally() -> None:
+def test_analytics_client_rejects_video_day_without_multi_filter() -> None:
+    """dimensions=video,day without a multi-value video filter must be rejected."""
     async def _run() -> None:
-        client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+        )
         yt_analytics = YouTubeAnalyticsClient(http_client=client)
 
-        with pytest.raises(
-            InvalidQueryError, match="Combination 'dimensions=video,day' is unsupported"
-        ):
+        # No filter at all
+        with pytest.raises(InvalidQueryError, match="multi-value video filter"):
             await yt_analytics.query_report(
                 access_token="tok",
                 start_date=date(2024, 1, 1),
                 end_date=date(2024, 1, 7),
                 metrics=["views"],
                 dimensions=["video", "day"],
+            )
+
+        # Single-value video filter
+        with pytest.raises(InvalidQueryError, match="multi-value video filter"):
+            await yt_analytics.query_report(
+                access_token="tok",
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 1, 7),
+                metrics=["views"],
+                dimensions=["video", "day"],
+                filters="video==VID_001",
             )
 
         with pytest.raises(InvalidQueryError, match="cannot be after endDate"):
@@ -342,6 +355,44 @@ def test_analytics_client_rejects_unsupported_dimensions_locally() -> None:
                 end_date=date(2024, 1, 1),
                 metrics=["views"],
             )
+
+    asyncio.run(_run())
+
+
+def test_analytics_client_allows_video_day_with_multi_filter() -> None:
+    """dimensions=day,video with a multi-value video filter must be allowed."""
+    async def _run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "dimensions=day%2Cvideo" in str(request.url) or \
+                "dimensions=day,video" in str(request.url)
+            content = {
+                "columnHeaders": [
+                    {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+                    {"name": "video", "columnType": "DIMENSION", "dataType": "STRING"},
+                    {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+                ],
+                "rows": [
+                    ["2024-01-01", "VID_A", 100],
+                    ["2024-01-01", "VID_B", 200],
+                    ["2024-01-02", "VID_A", 150],
+                    ["2024-01-02", "VID_B", 250],
+                ],
+            }
+            return httpx.Response(200, json=content)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        yt_analytics = YouTubeAnalyticsClient(http_client=client)
+
+        report = await yt_analytics.query_report(
+            access_token="tok",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 7),
+            metrics=["views"],
+            dimensions=["day", "video"],
+            filters="video==VID_A,VID_B",
+        )
+        assert len(report.rows) == 4
+        assert report.column_headers[1].name == "video"
 
     asyncio.run(_run())
 

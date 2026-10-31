@@ -31,49 +31,54 @@ import { MetricStats } from '../../models/analytics.model';
   `,
   styles: [`
     .metric-card {
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
       min-width: 0;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+    .metric-card:hover {
+      box-shadow: var(--shadow-md);
     }
     .metric-label {
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-tertiary);
-      margin-bottom: 0.375rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--ink-soft);
+      margin-bottom: 0.5rem;
     }
     .metric-value {
-      font-size: 1.5rem;
-      font-weight: 600;
-      color: var(--text-primary);
-      margin-bottom: 0.25rem;
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 0.375rem;
+      letter-spacing: -0.02em;
     }
     .metric-na {
       font-size: 1rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
       font-weight: 400;
     }
     .metric-meta {
       display: flex;
       gap: 0.75rem;
       font-size: 0.75rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
     }
     .metric-ci { font-style: italic; }
     .metric-limitations {
-      margin-top: 0.5rem;
+      margin-top: 0.625rem;
       display: flex;
       flex-wrap: wrap;
       gap: 0.25rem;
     }
     .limitation-tag {
       font-size: 0.6875rem;
-      background: var(--surface-warning);
-      color: var(--text-secondary);
+      background: var(--warn-bg);
+      color: var(--warn-ink);
       padding: 0.125rem 0.5rem;
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       line-height: 1.4;
     }
   `],

@@ -1,66 +1,110 @@
 :root {
-  --color-primary: #2563eb;
-  --color-primary-hover: #1d4ed8;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-subtle: #eef2ff;
+  --accent-text: #fff;
 
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-tertiary: #9ca3af;
+  --ink: #1e293b;
+  --ink-soft: #64748b;
+  --ink-faint: #94a3b8;
 
-  --surface-body: #f9fafb;
-  --surface-card: #ffffff;
-  --surface-sidebar: #ffffff;
-  --surface-hover: #f3f4f6;
-  --surface-active: #eff6ff;
-  --surface-warning: #fffbeb;
-  --surface-error: #fef2f2;
+  --surface: #f8fafc;
+  --card: #ffffff;
+  --sidebar-bg: #1e293b;
+  --sidebar-ink: #e2e8f0;
+  --sidebar-ink-faint: #94a3b8;
+  --sidebar-hover: rgba(255, 255, 255, 0.08);
+  --sidebar-active: rgba(99, 102, 241, 0.2);
 
-  --border-default: #e5e7eb;
-  --border-warning: #fcd34d;
-  --border-error: #fca5a5;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  --success-bg: #f0fdf4;
+  --success-ink: #166534;
+  --warn-bg: #fffbeb;
+  --warn-ink: #92400e;
+  --warn-border: #fcd34d;
+  --error-bg: #fef2f2;
+  --error-ink: #b91c1c;
+  --error-border: #fca5a5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  --font: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --color-primary: #60a5fa;
-    --color-primary-hover: #93bbfd;
+    --accent: #818cf8;
+    --accent-hover: #a5b4fc;
+    --accent-subtle: rgba(99, 102, 241, 0.15);
+    --accent-text: #1e1b4b;
 
-    --text-primary: #f9fafb;
-    --text-secondary: #d1d5db;
-    --text-tertiary: #6b7280;
+    --ink: #f1f5f9;
+    --ink-soft: #94a3b8;
+    --ink-faint: #64748b;
 
-    --surface-body: #111827;
-    --surface-card: #1f2937;
-    --surface-sidebar: #1f2937;
-    --surface-hover: #374151;
-    --surface-active: #1e3a5f;
-    --surface-warning: #422006;
-    --surface-error: #450a0a;
+    --surface: #0f172a;
+    --card: #1e293b;
+    --sidebar-bg: #0c1222;
+    --sidebar-ink: #cbd5e1;
+    --sidebar-ink-faint: #64748b;
+    --sidebar-hover: rgba(255, 255, 255, 0.06);
+    --sidebar-active: rgba(129, 140, 248, 0.2);
 
-    --border-default: #374151;
-    --border-warning: #92400e;
-    --border-error: #991b1b;
+    --border: #334155;
+    --border-strong: #475569;
+
+    --success-bg: rgba(22, 101, 52, 0.2);
+    --success-ink: #86efac;
+    --warn-bg: rgba(146, 64, 14, 0.2);
+    --warn-ink: #fcd34d;
+    --warn-border: #92400e;
+    --error-bg: rgba(185, 28, 28, 0.15);
+    --error-ink: #fca5a5;
+    --error-border: #991b1b;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
   }
 }
 
 :root[data-theme="dark"] {
-  --color-primary: #60a5fa;
-  --color-primary-hover: #93bbfd;
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-subtle: rgba(99, 102, 241, 0.15);
+  --accent-text: #1e1b4b;
 
-  --text-primary: #f9fafb;
-  --text-secondary: #d1d5db;
-  --text-tertiary: #6b7280;
+  --ink: #f1f5f9;
+  --ink-soft: #94a3b8;
+  --ink-faint: #64748b;
 
-  --surface-body: #111827;
-  --surface-card: #1f2937;
-  --surface-sidebar: #1f2937;
-  --surface-hover: #374151;
-  --surface-active: #1e3a5f;
-  --surface-warning: #422006;
-  --surface-error: #450a0a;
+  --surface: #0f172a;
+  --card: #1e293b;
+  --sidebar-bg: #0c1222;
+  --sidebar-ink: #cbd5e1;
+  --sidebar-ink-faint: #64748b;
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active: rgba(129, 140, 248, 0.2);
 
-  --border-default: #374151;
-  --border-warning: #92400e;
-  --border-error: #991b1b;
+  --border: #334155;
+  --border-strong: #475569;
+
+  --success-bg: rgba(22, 101, 52, 0.2);
+  --success-ink: #86efac;
+  --warn-bg: rgba(146, 64, 14, 0.2);
+  --warn-ink: #fcd34d;
+  --warn-border: #92400e;
+  --error-bg: rgba(185, 28, 28, 0.15);
+  --error-ink: #fca5a5;
+  --error-border: #991b1b;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 *,
@@ -77,15 +121,14 @@ html {
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    sans-serif;
-  background: var(--surface-body);
-  color: var(--text-primary);
+  font-family: var(--font);
+  background: var(--surface);
+  color: var(--ink);
   line-height: 1.5;
 }
 
 a {
-  color: var(--color-primary);
+  color: var(--accent);
   text-decoration: none;
 }
 a:hover {

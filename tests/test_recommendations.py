@@ -14,8 +14,10 @@ import pytest
 
 from miconte.recommendations import (
     APV_THRESHOLD_RATIO,
+    ER_HIGH_OUTLIER_RATIO,
     MIN_BASELINE_N,
     VELOCITY_THRESHOLD,
+    VIEWS_THRESHOLD_RATIO,
     evaluate_rules,
 )
 from miconte.recommendations._models import RecommendationResult, RecommendationSignal
@@ -26,6 +28,8 @@ from miconte.recommendations._rules import (
     r04_nsc_negative,
     r05_er_below_median,
     r06_insufficient_data,
+    r07_views_below_channel_median,
+    r08_high_engagement_outlier,
 )
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -42,6 +46,9 @@ def _signal(
     channel_ctr_median: float | None = 0.05,
     channel_er_median: float | None = 0.04,
     channel_velocity_median: float | None = 1.0,
+    snapshot_view_count: int | None = None,
+    channel_view_count_median: float | None = None,
+    data_source: str = "daily",
 ) -> RecommendationSignal:
     """Build a RecommendationSignal with overridable defaults."""
     return RecommendationSignal(
@@ -56,7 +63,10 @@ def _signal(
         channel_ctr_median=channel_ctr_median,
         channel_er_median=channel_er_median,
         channel_velocity_median=channel_velocity_median,
+        snapshot_view_count=snapshot_view_count,
+        channel_view_count_median=channel_view_count_median,
         n_videos_baseline=n,
+        data_source=data_source,
         period_start=date(2026, 9, 1),
         period_end=date(2026, 9, 30),
     )
@@ -308,6 +318,163 @@ class TestR05ERBelowMedian:
         assert result.priority == "low"
 
 
+# ─── R07 — Views below channel median (snapshot) ────────────────────────────
+
+class TestR07ViewsBelowChannelMedian:
+    def test_fires_when_views_below_threshold(self) -> None:
+        signal = _signal(
+            snapshot_view_count=200,
+            channel_view_count_median=1000.0,
+            data_source="snapshot",
+        )
+        result = r07_views_below_channel_median(signal)
+        assert result.triggered
+        assert result.rule_code == "R07_VIEWS_BELOW_CHANNEL_MEDIAN"
+
+    def test_does_not_fire_when_views_above_threshold(self) -> None:
+        signal = _signal(
+            snapshot_view_count=800,
+            channel_view_count_median=1000.0,
+            data_source="snapshot",
+        )
+        result = r07_views_below_channel_median(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_when_views_at_threshold(self) -> None:
+        median = 1000.0
+        threshold = int(VIEWS_THRESHOLD_RATIO * median)
+        signal = _signal(
+            snapshot_view_count=threshold,
+            channel_view_count_median=median,
+            data_source="snapshot",
+        )
+        result = r07_views_below_channel_median(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_when_snapshot_view_count_is_none(self) -> None:
+        signal = _signal(channel_view_count_median=1000.0)
+        result = r07_views_below_channel_median(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_when_median_is_none(self) -> None:
+        signal = _signal(snapshot_view_count=200)
+        result = r07_views_below_channel_median(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_when_median_is_zero(self) -> None:
+        signal = _signal(snapshot_view_count=0, channel_view_count_median=0.0)
+        result = r07_views_below_channel_median(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_with_thin_baseline(self) -> None:
+        signal = _signal(
+            n=MIN_BASELINE_N - 1,
+            snapshot_view_count=10,
+            channel_view_count_median=5000.0,
+        )
+        result = r07_views_below_channel_median(signal)
+        assert not result.triggered
+
+    def test_evidence_contains_view_counts(self) -> None:
+        signal = _signal(
+            snapshot_view_count=200,
+            channel_view_count_median=5000.0,
+            data_source="snapshot",
+        )
+        result = r07_views_below_channel_median(signal)
+        assert result.triggered
+        assert result.metrics_evidence["video_view_count"] == 200
+        assert result.metrics_evidence["data_source"] == "snapshot"
+
+    def test_priority_is_medium(self) -> None:
+        signal = _signal(
+            snapshot_view_count=100,
+            channel_view_count_median=5000.0,
+            data_source="snapshot",
+        )
+        result = r07_views_below_channel_median(signal)
+        assert result.triggered
+        assert result.priority == "medium"
+
+
+# ─── R08 — High engagement outlier ──────────────────────────────────────────
+
+class TestR08HighEngagementOutlier:
+    def test_fires_when_er_above_outlier_threshold(self) -> None:
+        median = 0.04
+        signal = _signal(er=0.08, channel_er_median=median)
+        result = r08_high_engagement_outlier(signal)
+        assert result.triggered
+        assert result.rule_code == "R08_HIGH_ENGAGEMENT_OUTLIER"
+
+    def test_does_not_fire_when_er_below_outlier_threshold(self) -> None:
+        median = 0.04
+        signal = _signal(er=0.05, channel_er_median=median)
+        result = r08_high_engagement_outlier(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_when_er_at_threshold(self) -> None:
+        median = 0.04
+        threshold = ER_HIGH_OUTLIER_RATIO * median
+        signal = _signal(er=threshold, channel_er_median=median)
+        result = r08_high_engagement_outlier(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_when_er_is_none(self) -> None:
+        signal = _signal(er=None, channel_er_median=0.04)
+        result = r08_high_engagement_outlier(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_when_channel_median_is_none(self) -> None:
+        signal = _signal(er=0.08, channel_er_median=None)
+        result = r08_high_engagement_outlier(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_when_channel_median_is_zero(self) -> None:
+        signal = _signal(er=0.08, channel_er_median=0.0)
+        result = r08_high_engagement_outlier(signal)
+        assert not result.triggered
+
+    def test_does_not_fire_with_thin_baseline(self) -> None:
+        signal = _signal(n=MIN_BASELINE_N - 1, er=0.20, channel_er_median=0.04)
+        result = r08_high_engagement_outlier(signal)
+        assert not result.triggered
+
+    def test_priority_is_info(self) -> None:
+        signal = _signal(er=0.10, channel_er_median=0.04)
+        result = r08_high_engagement_outlier(signal)
+        assert result.triggered
+        assert result.priority == "info"
+
+    def test_evidence_contains_outlier_ratio(self) -> None:
+        signal = _signal(er=0.10, channel_er_median=0.04)
+        result = r08_high_engagement_outlier(signal)
+        assert result.triggered
+        assert result.metrics_evidence["outlier_ratio"] == ER_HIGH_OUTLIER_RATIO
+
+    def test_description_uses_associative_language(self) -> None:
+        signal = _signal(er=0.10, channel_er_median=0.04)
+        result = r08_high_engagement_outlier(signal)
+        assert result.triggered
+        desc = result.description.lower()
+        assert "causó que" not in desc
+        assert "causa que" not in desc
+        assert "provoca" not in desc
+        assert "asocia" in desc or "observa" in desc
+
+    def test_works_with_snapshot_data(self) -> None:
+        """R08 should fire for snapshot-based signals too."""
+        signal = _signal(
+            er=0.12, channel_er_median=0.04,
+            apv=None, ctr=None, nsc_1k=None, velocity_24h=None,
+            channel_apv_median=None, channel_ctr_median=None, channel_velocity_median=None,
+            data_source="snapshot",
+        )
+        result = r08_high_engagement_outlier(signal)
+        assert result.triggered
+        assert result.metrics_evidence["data_source"] == "snapshot"
+
+
 # ─── evaluate_rules — engine ─────────────────────────────────────────────────
 
 class TestEvaluateRules:
@@ -321,7 +488,9 @@ class TestEvaluateRules:
         assert "R03_VELOCITY_LOW_24H" in codes
         assert "R04_NSC_NEGATIVE" in codes
         assert "R05_ER_BELOW_MEDIAN" in codes
-        assert len(results) == 6  # one per rule
+        assert "R07_VIEWS_BELOW_CHANNEL_MEDIAN" in codes
+        assert "R08_HIGH_ENGAGEMENT_OUTLIER" in codes
+        assert len(results) == 8  # one per rule
 
     def test_healthy_signal_triggers_only_r06_as_not_triggered(self) -> None:
         """A well-performing video should trigger no rules."""
@@ -394,6 +563,8 @@ class TestEvaluateRules:
             er=0.005, channel_er_median=0.04,
             nsc_1k=-10.0,
             velocity_24h=0.1, channel_velocity_median=1.0,
+            snapshot_view_count=100,
+            channel_view_count_median=5000.0,
         )
         # Causal VERBS/CLAIMS: "causó que", "causa que", "provoca", "leads to"
         # Note: "causalidad" and "la causa directa" appear in disclaimers (correct use)
@@ -414,3 +585,26 @@ class TestEvaluateRules:
         signal = _signal(n=0)
         results = evaluate_rules(signal)
         assert results[0].rule_code == "R06_INSUFFICIENT_DATA"
+
+    def test_snapshot_signal_fires_r07_and_r08(self) -> None:
+        """A snapshot-based signal with low views and high ER should trigger R07 and R08."""
+        signal = _signal(
+            n=20,
+            apv=None, ctr=None, nsc_1k=None, velocity_24h=None,
+            channel_apv_median=None, channel_ctr_median=None, channel_velocity_median=None,
+            er=0.12, channel_er_median=0.04,
+            snapshot_view_count=200,
+            channel_view_count_median=5000.0,
+            data_source="snapshot",
+        )
+        results = evaluate_rules(signal)
+        triggered_codes = {r.rule_code for r in results if r.triggered}
+        assert "R07_VIEWS_BELOW_CHANNEL_MEDIAN" in triggered_codes
+        assert "R08_HIGH_ENGAGEMENT_OUTLIER" in triggered_codes
+
+    def test_path_b_signal_does_not_fire_r07(self) -> None:
+        """A daily-based signal without snapshot fields should not trigger R07."""
+        signal = _signal(n=20, apv=0.5, channel_apv_median=0.5)
+        results = evaluate_rules(signal)
+        r07 = next(r for r in results if r.rule_code == "R07_VIEWS_BELOW_CHANNEL_MEDIAN")
+        assert not r07.triggered

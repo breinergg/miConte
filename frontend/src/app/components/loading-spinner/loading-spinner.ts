@@ -15,22 +15,26 @@ import { Component } from '@angular/core';
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 3rem 1rem;
+      padding: 4rem 1rem;
       gap: 1rem;
-      color: var(--text-secondary);
+      color: var(--ink-soft);
     }
     .spinner {
-      width: 32px;
-      height: 32px;
-      border: 3px solid var(--border-default);
-      border-top-color: var(--color-primary);
+      width: 28px;
+      height: 28px;
+      border: 2.5px solid var(--border);
+      border-top-color: var(--accent);
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+      animation: spin 0.7s linear infinite;
     }
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
-    p { margin: 0; font-size: 0.875rem; }
+    p {
+      margin: 0;
+      font-size: 0.8125rem;
+      font-weight: 500;
+    }
   `],
 })
 export class LoadingSpinnerComponent {}

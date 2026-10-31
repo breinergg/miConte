@@ -51,6 +51,8 @@ DEFAULT_ANALYTICS_METRICS = [
     "shares",
 ]
 
+BATCH_SIZE_VIDEO_DAILY = 50
+
 
 class SyncService:
     """Domain service managing end-to-end synchronization of YouTube channels and metrics."""
@@ -281,9 +283,22 @@ class SyncService:
                 if stage_dto.status == "partially_succeeded":
                     has_partial_issues = True
 
-            # Stage D: Video Period & Daily Analytics (Analytics API v2)
+            # Stage D: Video Period Analytics (Analytics API v2)
             if "analytics_period" in requested_stages:
                 stage_dto, count = await self._sync_video_period_analytics(
+                    channel=channel,
+                    access_token=access_token,
+                    start_date=resolved_start,
+                    end_date=resolved_end,
+                )
+                stages_result.append(stage_dto)
+                total_records_processed += count
+                if stage_dto.status == "partially_succeeded":
+                    has_partial_issues = True
+
+            # Stage D': Video Daily Analytics (Analytics API v2, batched)
+            if "analytics_period" in requested_stages:
+                stage_dto, count = await self._sync_video_daily_analytics(
                     channel=channel,
                     access_token=access_token,
                     start_date=resolved_start,
@@ -726,6 +741,210 @@ class SyncService:
                 ),
             ),
             records_count,
+        )
+
+    async def _sync_video_daily_analytics(
+        self,
+        *,
+        channel: Channel,
+        access_token: str,
+        start_date: date,
+        end_date: date,
+    ) -> tuple[SyncStageResultDTO, int]:
+        """Query per-video daily metrics using batched dimensions=day,video queries.
+
+        Groups video IDs into batches of BATCH_SIZE_VIDEO_DAILY and queries
+        dimensions=["day","video"] with filters=video==ID1,ID2,...,IDn.
+        For batches with a single video, falls back to dimensions=["day"]
+        since the multi-value filter requirement would not be met.
+        """
+        videos = self.video_repo.get_all_videos_for_channel(channel.id)
+        if not videos:
+            return (
+                SyncStageResultDTO(
+                    stage="video_daily_analytics",
+                    status="succeeded",
+                    records_processed=0,
+                    details="No videos found for channel",
+                ),
+                0,
+            )
+
+        yt_to_internal: dict[str, uuid.UUID] = {
+            v.youtube_video_id: v.id for v in videos
+        }
+        yt_ids = list(yt_to_internal.keys())
+
+        total_records = 0
+        batch_count = 0
+        errors: list[str] = []
+
+        for i in range(0, len(yt_ids), BATCH_SIZE_VIDEO_DAILY):
+            batch = yt_ids[i : i + BATCH_SIZE_VIDEO_DAILY]
+
+            if len(batch) == 1:
+                count = await self._query_single_video_daily(
+                    access_token=access_token,
+                    start_date=start_date,
+                    end_date=end_date,
+                    yt_video_id=batch[0],
+                    internal_video_id=yt_to_internal[batch[0]],
+                    batch_index=batch_count,
+                    errors=errors,
+                )
+            else:
+                count = await self._query_batch_video_daily(
+                    access_token=access_token,
+                    start_date=start_date,
+                    end_date=end_date,
+                    batch=batch,
+                    yt_to_internal=yt_to_internal,
+                    batch_index=batch_count,
+                    errors=errors,
+                )
+            total_records += count
+            batch_count += 1
+
+        self.session.flush()
+
+        status = "succeeded"
+        if errors:
+            status = "partially_succeeded"
+
+        details = (
+            f"Persisted {total_records} video daily metric rows across "
+            f"{batch_count} batch queries ({start_date} to {end_date})"
+        )
+        if errors:
+            details += f"; errors in {len(errors)} batch(es)"
+
+        return (
+            SyncStageResultDTO(
+                stage="video_daily_analytics",
+                status=status,
+                records_processed=total_records,
+                details=details,
+            ),
+            total_records,
+        )
+
+    async def _query_single_video_daily(
+        self,
+        *,
+        access_token: str,
+        start_date: date,
+        end_date: date,
+        yt_video_id: str,
+        internal_video_id: uuid.UUID,
+        batch_index: int,
+        errors: list[str],
+    ) -> int:
+        """Query daily metrics for a single video using dimensions=day."""
+        try:
+            report = await self._with_retry(
+                lambda vid=yt_video_id: self.analytics_client.query_report(
+                    access_token=access_token,
+                    start_date=start_date,
+                    end_date=end_date,
+                    metrics=DEFAULT_ANALYTICS_METRICS,
+                    dimensions=["day"],
+                    filters=f"video=={vid}",
+                ),
+                operation_name=f"reports.query_video_daily_single_{batch_index}",
+            )
+        except Exception as exc:
+            errors.append(f"Single-video batch {batch_index}: {exc}")
+            return 0
+
+        headers = [h.name for h in report.column_headers]
+        count = 0
+        for row in report.rows:
+            row_dict = dict(zip(headers, row, strict=False))
+            day_str = str(row_dict.get("day", ""))
+            if not day_str:
+                continue
+            try:
+                row_date = date.fromisoformat(day_str)
+            except ValueError:
+                continue
+            self._persist_video_daily_row(internal_video_id, row_date, row_dict)
+            count += 1
+        return count
+
+    async def _query_batch_video_daily(
+        self,
+        *,
+        access_token: str,
+        start_date: date,
+        end_date: date,
+        batch: list[str],
+        yt_to_internal: dict[str, uuid.UUID],
+        batch_index: int,
+        errors: list[str],
+    ) -> int:
+        """Query daily metrics for multiple videos using dimensions=day,video."""
+        video_filter = f"video=={','.join(batch)}"
+        try:
+            report = await self._with_retry(
+                lambda vf=video_filter: self.analytics_client.query_report(
+                    access_token=access_token,
+                    start_date=start_date,
+                    end_date=end_date,
+                    metrics=DEFAULT_ANALYTICS_METRICS,
+                    dimensions=["day", "video"],
+                    filters=vf,
+                    max_results=2000,
+                ),
+                operation_name=f"reports.query_video_daily_batch_{batch_index}",
+            )
+        except Exception as exc:
+            errors.append(f"Batch {batch_index}: {exc}")
+            return 0
+
+        headers = [h.name for h in report.column_headers]
+        count = 0
+        for row in report.rows:
+            row_dict = dict(zip(headers, row, strict=False))
+            day_str = str(row_dict.get("day", ""))
+            yt_video_id = str(row_dict.get("video", ""))
+            if not day_str or not yt_video_id:
+                continue
+            try:
+                row_date = date.fromisoformat(day_str)
+            except ValueError:
+                continue
+            internal_id = yt_to_internal.get(yt_video_id)
+            if not internal_id:
+                continue
+            self._persist_video_daily_row(internal_id, row_date, row_dict)
+            count += 1
+        return count
+
+    def _persist_video_daily_row(
+        self,
+        video_id: uuid.UUID,
+        row_date: date,
+        row_dict: dict[str, Any],
+    ) -> None:
+        """Extract metric values from a report row and persist to video_daily_metrics."""
+        self.metrics_repo.record_video_daily_metric(
+            video_id=video_id,
+            metric_date=row_date,
+            views=int(row_dict.get("views") or 0),
+            estimated_minutes_watched=int(
+                row_dict.get("estimatedMinutesWatched") or 0
+            ),
+            average_view_duration_seconds=int(
+                row_dict.get("averageViewDuration") or 0
+            ),
+            average_view_percentage=float(
+                row_dict.get("averageViewPercentage") or 0.0
+            ),
+            likes=int(row_dict.get("likes") or 0),
+            comments=int(row_dict.get("comments") or 0),
+            shares=int(row_dict.get("shares") or 0),
+            subscribers_gained=int(row_dict.get("subscribersGained") or 0),
+            subscribers_lost=int(row_dict.get("subscribersLost") or 0),
         )
 
     async def _sync_reporting_reach(

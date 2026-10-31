@@ -23,14 +23,21 @@ import { DatePipe } from '@angular/common';
         <div class="error-banner"><p>{{ errorMessage() }}</p></div>
       }
       @case ('loaded') {
-        <h2>Conexión de YouTube</h2>
+        <h2 class="page-title">Conexión de YouTube</h2>
 
         <section class="connect-section">
-          <h3>Autorización OAuth</h3>
-          <p class="section-desc">
-            Conecta tu canal de YouTube para que miConte pueda acceder a tus métricas privadas
-            con permisos de solo lectura.
-          </p>
+          <div class="connect-header">
+            <svg class="yt-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814ZM9.545 15.568V8.432L15.818 12l-6.273 3.568Z"/>
+            </svg>
+            <div>
+              <h3>Autorización OAuth</h3>
+              <p class="section-desc">
+                Conecta tu canal de YouTube para que miConte pueda acceder a tus métricas privadas
+                con permisos de solo lectura.
+              </p>
+            </div>
+          </div>
           <button class="connect-btn" (click)="startAuthorization()" [disabled]="connecting()">
             {{ connecting() ? 'Generando URL...' : 'Conectar canal de YouTube' }}
           </button>
@@ -41,7 +48,7 @@ import { DatePipe } from '@angular/common';
 
         @if (channels().length > 0) {
           <section class="channels-section">
-            <h3>Canales conectados</h3>
+            <h3 class="section-title">Canales conectados</h3>
             @for (ch of channels(); track ch.channel_id) {
               <div class="channel-card">
                 <div class="channel-main">
@@ -77,11 +84,11 @@ import { DatePipe } from '@angular/common';
 
                 @if (connectionStatus() && statusChannelId() === ch.youtube_channel_id) {
                   <div class="status-detail">
-                    <div><strong>Conectado:</strong> {{ connectionStatus()!.is_connected ? 'Sí' : 'No' }}</div>
-                    <div><strong>Activo:</strong> {{ connectionStatus()!.is_active ? 'Sí' : 'No' }}</div>
-                    <div><strong>Scopes:</strong> {{ connectionStatus()!.granted_scopes }}</div>
+                    <div class="status-row"><span class="status-key">Conectado</span> <span>{{ connectionStatus()!.is_connected ? 'Sí' : 'No' }}</span></div>
+                    <div class="status-row"><span class="status-key">Activo</span> <span>{{ connectionStatus()!.is_active ? 'Sí' : 'No' }}</span></div>
+                    <div class="status-row"><span class="status-key">Scopes</span> <span>{{ connectionStatus()!.granted_scopes }}</span></div>
                     @if (connectionStatus()!.token_expires_at) {
-                      <div><strong>Token expira:</strong> {{ connectionStatus()!.token_expires_at | date:'medium' }}</div>
+                      <div class="status-row"><span class="status-key">Token expira</span> <span>{{ connectionStatus()!.token_expires_at | date:'medium' }}</span></div>
                     }
                   </div>
                 }
@@ -103,7 +110,7 @@ import { DatePipe } from '@angular/common';
           </section>
         } @else {
           <app-empty-state
-            icon="🔗"
+            icon="link"
             title="Sin canales"
             description="Conecta tu canal de YouTube usando el botón de autorización." />
         }
@@ -111,47 +118,79 @@ import { DatePipe } from '@angular/common';
     }
   `,
   styles: [`
-    h2 { margin: 0 0 1.5rem; font-size: 1.25rem; color: var(--text-primary); }
-    h3 { margin: 0 0 0.5rem; font-size: 1rem; color: var(--text-primary); }
+    .page-title {
+      margin: 0 0 1.5rem;
+      font-size: 1.375rem;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .section-title {
+      margin: 0 0 0.75rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
     .section-desc {
       font-size: 0.8125rem;
-      color: var(--text-secondary);
-      margin: 0 0 0.75rem;
-      line-height: 1.5;
+      color: var(--ink-soft);
+      margin: 0;
+      line-height: 1.6;
     }
 
     .connect-section {
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
-      padding: 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
       margin-bottom: 1.5rem;
+      box-shadow: var(--shadow-sm);
+    }
+    .connect-header {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+      margin-bottom: 1rem;
+    }
+    .connect-header h3 {
+      margin: 0 0 0.25rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .yt-icon {
+      width: 32px;
+      height: 32px;
+      color: #ff0000;
+      flex-shrink: 0;
+      margin-top: 2px;
     }
     .connect-btn {
       padding: 0.5rem 1.25rem;
       background: #dc2626;
       color: #fff;
       border: none;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       cursor: pointer;
       font-size: 0.875rem;
-      font-weight: 500;
+      font-weight: 600;
+      transition: background 0.15s;
     }
-    .connect-btn:hover { opacity: 0.9; }
+    .connect-btn:hover { background: #b91c1c; }
     .connect-btn:disabled { opacity: 0.5; cursor: default; }
     .auth-message {
       margin: 0.75rem 0 0;
       font-size: 0.8125rem;
-      color: var(--text-secondary);
+      color: var(--ink-soft);
     }
 
     .channels-section { margin-bottom: 1.5rem; }
     .channel-card {
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
-      padding: 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
       margin-top: 0.75rem;
+      box-shadow: var(--shadow-sm);
     }
     .channel-main {
       display: flex;
@@ -160,20 +199,27 @@ import { DatePipe } from '@angular/common';
       flex-wrap: wrap;
       margin-bottom: 0.375rem;
     }
-    .channel-main strong { color: var(--text-primary); }
-    .yt-id { font-size: 0.75rem; color: var(--text-tertiary); font-family: monospace; }
+    .channel-main strong {
+      color: var(--ink);
+      font-weight: 600;
+    }
+    .yt-id {
+      font-size: 0.75rem;
+      color: var(--ink-faint);
+      font-family: 'SF Mono', 'Cascadia Code', monospace;
+    }
     .status-badge {
       font-size: 0.6875rem;
       font-weight: 600;
-      padding: 0.15rem 0.5rem;
-      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      border-radius: var(--radius-sm);
     }
-    .connected { background: #dcfce7; color: #166534; }
-    .disconnected { background: #fef3c7; color: #92400e; }
+    .connected { background: var(--success-bg); color: var(--success-ink); }
+    .disconnected { background: var(--warn-bg); color: var(--warn-ink); }
 
     .channel-meta {
       font-size: 0.8125rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
       margin-bottom: 0.75rem;
     }
     .sync-status { font-style: italic; }
@@ -185,50 +231,75 @@ import { DatePipe } from '@angular/common';
     }
     .action-btn {
       padding: 0.375rem 0.875rem;
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 6px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
       cursor: pointer;
       font-size: 0.8125rem;
-      color: var(--text-secondary);
+      font-weight: 500;
+      color: var(--ink-soft);
+      transition: background 0.15s, border-color 0.15s;
     }
-    .action-btn:hover { background: var(--surface-hover); }
+    .action-btn:hover {
+      background: var(--accent-subtle);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
     .action-btn:disabled { opacity: 0.5; cursor: default; }
-    .action-btn.danger { color: #dc2626; border-color: #fca5a5; }
-    .action-btn.danger:hover { background: #fef2f2; }
+    .action-btn.danger {
+      color: var(--error-ink);
+      border-color: var(--error-border);
+    }
+    .action-btn.danger:hover {
+      background: var(--error-bg);
+    }
 
     .status-detail {
       margin-top: 0.75rem;
-      padding: 0.75rem;
-      background: var(--surface-hover);
-      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border-radius: var(--radius-sm);
       font-size: 0.8125rem;
-      color: var(--text-secondary);
+      color: var(--ink-soft);
       display: grid;
-      gap: 0.25rem;
+      gap: 0.375rem;
+    }
+    .status-row {
+      display: flex;
+      gap: 0.75rem;
+    }
+    .status-key {
+      font-weight: 600;
+      color: var(--ink);
+      min-width: 100px;
     }
 
     .sync-history { margin-top: 0.75rem; }
-    .sync-history h4 { margin: 0 0 0.5rem; font-size: 0.875rem; color: var(--text-primary); }
+    .sync-history h4 {
+      margin: 0 0 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
     .sync-run {
       display: flex;
       gap: 0.75rem;
       font-size: 0.8125rem;
-      color: var(--text-secondary);
+      color: var(--ink-soft);
       padding: 0.25rem 0;
     }
-    .run-status { font-weight: 500; }
-    .status-succeeded { color: #166534; }
-    .status-failed { color: #b91c1c; }
-    .status-partially_succeeded { color: #92400e; }
+    .run-status { font-weight: 600; }
+    .status-succeeded { color: var(--success-ink); }
+    .status-failed { color: var(--error-ink); }
+    .status-partially_succeeded { color: var(--warn-ink); }
 
     .error-banner {
       padding: 1rem 1.25rem;
-      background: var(--surface-error);
-      border: 1px solid var(--border-error);
-      border-radius: 8px;
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      border-radius: var(--radius);
     }
-    .error-banner p { margin: 0; font-size: 0.875rem; color: var(--text-primary); }
+    .error-banner p { margin: 0; font-size: 0.875rem; color: var(--ink); }
   `],
 })
 export class ConnectionComponent implements OnInit {

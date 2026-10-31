@@ -13,6 +13,8 @@ Threshold documentation (reproducibility contract):
   VELOCITY_THRESHOLD    = 0.70  — velocity_24h < 70 % of channel median velocity
   MIN_BASELINE_N        = 10    — minimum videos in baseline for rules R01-R05
   NSC_NEGATIVE_THRESHOLD = 0.0  — nsc_1k < 0 triggers R04 regardless of baseline
+  VIEWS_THRESHOLD_RATIO = 0.50  — snapshot views < 50 % of channel median views (R07)
+  ER_HIGH_OUTLIER_RATIO = 1.50  — snapshot ER > 150 % of channel median ER (R08)
 
 Language contract: descriptions use associative language only.
 Causal claims are strictly prohibited.
@@ -28,6 +30,8 @@ CTR_THRESHOLD_RATIO: float = 0.85
 ER_THRESHOLD_RATIO: float = 0.85
 VELOCITY_THRESHOLD: float = 0.70
 MIN_BASELINE_N: int = 10
+VIEWS_THRESHOLD_RATIO: float = 0.50
+ER_HIGH_OUTLIER_RATIO: float = 1.50
 
 
 # ─── Individual rules ───────────────────────────────────────────────────────
@@ -423,8 +427,151 @@ def r05_er_below_median(signal: RecommendationSignal) -> RecommendationResult:
     )
 
 
+def r07_views_below_channel_median(signal: RecommendationSignal) -> RecommendationResult:
+    """R07 — Visualizaciones acumuladas por debajo de la mediana del canal (snapshot).
+
+    Fires when the video's cumulative view count from public snapshots is below
+    VIEWS_THRESHOLD_RATIO × channel_view_count_median and the baseline has at
+    least MIN_BASELINE_N videos.  This rule is designed for Path A (snapshot-based
+    analysis) and only evaluates when snapshot_view_count is populated.
+    """
+    code = "R07_VIEWS_BELOW_CHANNEL_MEDIAN"
+
+    if (
+        signal.snapshot_view_count is None
+        or signal.channel_view_count_median is None
+        or signal.channel_view_count_median <= 0.0
+        or signal.n_videos_baseline < MIN_BASELINE_N
+    ):
+        return RecommendationResult(
+            rule_code=code, triggered=False, priority="medium",
+            title="Visualizaciones acumuladas: datos insuficientes",
+            description="No se pudo evaluar R07 por falta de datos de snapshots o línea base.",
+            metrics_evidence={"reason": "insufficient_data"},
+        )
+
+    threshold = VIEWS_THRESHOLD_RATIO * signal.channel_view_count_median
+    triggered = signal.snapshot_view_count < threshold
+
+    evidence = {
+        "video_view_count": signal.snapshot_view_count,
+        "channel_view_count_median": round(signal.channel_view_count_median, 1),
+        "threshold_ratio": VIEWS_THRESHOLD_RATIO,
+        "threshold_value": round(threshold, 1),
+        "n_videos_baseline": signal.n_videos_baseline,
+        "data_source": signal.data_source,
+    }
+
+    if not triggered:
+        return RecommendationResult(
+            rule_code=code, triggered=False, priority="medium",
+            title="Visualizaciones acumuladas dentro del rango del canal",
+            description=(
+                f"Las visualizaciones acumuladas del video ({signal.snapshot_view_count:,}) "
+                f"se observan en o por encima del {VIEWS_THRESHOLD_RATIO:.0%} de la mediana "
+                f"del canal ({signal.channel_view_count_median:,.0f})."
+            ),
+            metrics_evidence=evidence,
+        )
+
+    return RecommendationResult(
+        rule_code=code,
+        triggered=True,
+        priority="medium",
+        title="Visualizaciones acumuladas significativamente por debajo de la mediana del canal",
+        description=(
+            f"Las visualizaciones acumuladas de este video ({signal.snapshot_view_count:,}) "
+            f"se observan por debajo del {VIEWS_THRESHOLD_RATIO:.0%} de la mediana del canal "
+            f"({signal.channel_view_count_median:,.0f}), correspondiente a un umbral de "
+            f"{threshold:,.0f} visualizaciones. "
+            f"Evaluado sobre {signal.n_videos_baseline} videos comparados con datos públicos. "
+            "Esta observación es asociativa y no implica causalidad; las visualizaciones "
+            "acumuladas dependen de la antigüedad del video y factores externos."
+        ),
+        metrics_evidence=evidence,
+        limitations=[
+            "Las visualizaciones acumuladas reflejan el total histórico, no un período "
+            "fijo; videos más recientes tienen naturalmente menos visualizaciones.",
+            "La comparación con la mediana del canal no ajusta por antigüedad ni "
+            "por cambios en el algoritmo de recomendación de YouTube.",
+        ],
+    )
+
+
+def r08_high_engagement_outlier(signal: RecommendationSignal) -> RecommendationResult:
+    """R08 — Tasa de engagement significativamente por encima de la mediana del canal.
+
+    Fires when the video's ER is above ER_HIGH_OUTLIER_RATIO × channel_er_median.
+    This is a POSITIVE insight — it surfaces content that resonated with the audience.
+    Works with both Path A (snapshot ER) and Path B (daily ER).
+    """
+    code = "R08_HIGH_ENGAGEMENT_OUTLIER"
+
+    if (
+        signal.n_videos_baseline < MIN_BASELINE_N
+        or signal.er is None
+        or signal.channel_er_median is None
+        or signal.channel_er_median <= 0.0
+    ):
+        return RecommendationResult(
+            rule_code=code, triggered=False, priority="info",
+            title="Engagement destacado: datos insuficientes",
+            description="No se pudo evaluar R08 por falta de datos de engagement o línea base.",
+            metrics_evidence={"reason": "insufficient_data"},
+        )
+
+    threshold = ER_HIGH_OUTLIER_RATIO * signal.channel_er_median
+    triggered = signal.er > threshold
+
+    evidence = {
+        "video_er": round(signal.er, 4),
+        "channel_er_median": round(signal.channel_er_median, 4),
+        "outlier_ratio": ER_HIGH_OUTLIER_RATIO,
+        "threshold_value": round(threshold, 4),
+        "n_videos_baseline": signal.n_videos_baseline,
+        "data_source": signal.data_source,
+    }
+
+    if not triggered:
+        return RecommendationResult(
+            rule_code=code, triggered=False, priority="info",
+            title="Engagement dentro del rango habitual del canal",
+            description=(
+                f"La tasa de engagement del video ({signal.er:.3%}) no supera "
+                f"el {ER_HIGH_OUTLIER_RATIO:.0%} de la mediana del canal "
+                f"({signal.channel_er_median:.3%})."
+            ),
+            metrics_evidence=evidence,
+        )
+
+    return RecommendationResult(
+        rule_code=code,
+        triggered=True,
+        priority="info",
+        title="Engagement significativamente por encima de la mediana del canal",
+        description=(
+            f"La tasa de engagement de este video ({signal.er:.3%}) se observa por encima del "
+            f"{ER_HIGH_OUTLIER_RATIO:.0%} de la mediana del canal "
+            f"({signal.channel_er_median:.3%}), "
+            f"superando el umbral de {threshold:.3%}. "
+            f"Este patrón sugiere que el contenido se asocia con mayor interacción relativa "
+            f"dentro del canal. Evaluado sobre {signal.n_videos_baseline} videos comparados. "
+            "Esta observación es asociativa y no implica causalidad."
+        ),
+        metrics_evidence=evidence,
+        limitations=[
+            "Un engagement rate alto puede estar influenciado por factores externos "
+            "(tendencias, colaboraciones, eventos) y no refleja necesariamente la "
+            "calidad intrínseca del contenido.",
+            "La tasa de engagement varía según el nicho, el formato y la antigüedad del video.",
+        ],
+    )
+
+
 # ─── Ordered rule registry ────────────────────────────────────────────────────
 # R06 is always evaluated first so callers can detect the no-data case early.
+# R07 and R08 are snapshot-aware rules; they silently return triggered=False
+# when snapshot fields are not populated (Path B / daily metrics).
 _ALL_RULES = [
     r06_insufficient_data,
     r01_apv_below_median,
@@ -432,4 +579,6 @@ _ALL_RULES = [
     r03_velocity_low_24h,
     r04_nsc_negative,
     r05_er_below_median,
+    r07_views_below_channel_median,
+    r08_high_engagement_outlier,
 ]

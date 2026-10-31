@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from miconte.models.video import Video, VideoPublicSnapshot
@@ -141,4 +141,34 @@ class VideoRepository:
             .limit(1)
         )
         return self.session.execute(stmt).scalar_one_or_none()
+
+    def get_latest_snapshots_for_channel(
+        self, channel_id: uuid.UUID,
+    ) -> list[VideoPublicSnapshot]:
+        """Fetch the latest snapshot per video for all videos in a channel.
+
+        Uses a lateral-join-style subquery: for each video belonging to the
+        channel, picks the snapshot row with the most recent captured_at.
+        Returns an empty list when the channel has no videos or no snapshots.
+        """
+        latest_ts = (
+            select(
+                VideoPublicSnapshot.video_id,
+                func.max(VideoPublicSnapshot.captured_at).label("max_captured"),
+            )
+            .join(Video, Video.id == VideoPublicSnapshot.video_id)
+            .where(Video.channel_id == channel_id)
+            .group_by(VideoPublicSnapshot.video_id)
+            .subquery()
+        )
+
+        stmt = (
+            select(VideoPublicSnapshot)
+            .join(
+                latest_ts,
+                (VideoPublicSnapshot.video_id == latest_ts.c.video_id)
+                & (VideoPublicSnapshot.captured_at == latest_ts.c.max_captured),
+            )
+        )
+        return list(self.session.execute(stmt).scalars().all())
 

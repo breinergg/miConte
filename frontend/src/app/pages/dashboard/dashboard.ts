@@ -1,4 +1,4 @@
-import { Component, signal, computed, OnInit } from '@angular/core';
+import { Component, signal, OnInit } from '@angular/core';
 import { ChannelService } from '../../services/channel.service';
 import { AnalyticsService } from '../../services/analytics.service';
 import { AiService } from '../../services/ai.service';
@@ -31,7 +31,7 @@ type PageState = 'loading' | 'loaded' | 'no-channel' | 'compliance-blocked' | 'e
       }
       @case ('no-channel') {
         <app-empty-state
-          icon="🔗"
+          icon="link"
           title="Sin canal conectado"
           description="Conecta tu canal de YouTube desde la sección de Conexión para comenzar." />
       }
@@ -51,7 +51,12 @@ type PageState = 'loading' | 'loaded' | 'no-channel' | 'compliance-blocked' | 'e
                 <img
                   class="channel-thumb"
                   [src]="summary()!.thumbnail_url"
-                  [alt]="summary()!.title" />
+                  [alt]="summary()!.title"
+                  (error)="onThumbError($event)" />
+              } @else {
+                <div class="channel-thumb channel-thumb-fallback" [attr.aria-label]="summary()!.title">
+                  {{ summary()!.title.charAt(0).toUpperCase() }}
+                </div>
               }
               <div>
                 <h2>{{ summary()!.title }}</h2>
@@ -99,9 +104,14 @@ type PageState = 'loading' | 'loaded' | 'no-channel' | 'compliance-blocked' | 'e
           @if (!aiLoading() && aiResult()) {
             <section class="ai-section">
               <div class="ai-header">
-                <span class="ai-badge">✦ Interpretación IA</span>
+                <div class="ai-badge">
+                  <svg class="ai-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z"/>
+                  </svg>
+                  Interpretación IA
+                </div>
                 @if (aiResult()!.degraded) {
-                  <span class="ai-status-chip ai-degraded">{{ aiResult()!.note }}</span>
+                  <span class="ai-status-chip">{{ aiResult()!.note }}</span>
                 }
               </div>
               @if (aiResult()!.ai_summary) {
@@ -129,41 +139,57 @@ type PageState = 'loading' | 'loaded' | 'no-channel' | 'compliance-blocked' | 'e
       width: 56px; height: 56px;
       border-radius: 50%;
       object-fit: cover;
+      box-shadow: var(--shadow-sm);
+    }
+    .channel-thumb-fallback {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      background: var(--accent-subtle);
+      color: var(--accent);
+      font-size: 1.25rem;
+      font-weight: 700;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--shadow-sm);
+      flex-shrink: 0;
     }
     .channel-info h2 {
       margin: 0;
       font-size: 1.375rem;
-      color: var(--text-primary);
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.01em;
     }
     .channel-url {
       font-size: 0.8125rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
     }
 
     .snapshot-cards {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 0.75rem;
     }
     .snap-card {
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
-      padding: 1rem;
-      text-align: center;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      box-shadow: var(--shadow-sm);
     }
     .snap-label {
       display: block;
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-tertiary);
-      margin-bottom: 0.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--ink-soft);
+      margin-bottom: 0.375rem;
     }
     .snap-value {
-      font-size: 1.375rem;
-      font-weight: 600;
-      color: var(--text-primary);
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.02em;
     }
 
     .section-header {
@@ -176,38 +202,40 @@ type PageState = 'loading' | 'loaded' | 'no-channel' | 'compliance-blocked' | 'e
     .section-header h3 {
       margin: 0;
       font-size: 1.125rem;
-      color: var(--text-primary);
+      font-weight: 600;
+      color: var(--ink);
     }
     .period-badge {
       font-size: 0.75rem;
-      color: var(--text-tertiary);
-      background: var(--surface-card);
-      padding: 0.25rem 0.625rem;
-      border-radius: 4px;
-      border: 1px solid var(--border-default);
+      color: var(--ink-faint);
+      background: var(--card);
+      padding: 0.25rem 0.75rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
     }
 
     .metrics-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 0.75rem;
     }
 
     .error-banner {
       padding: 1rem 1.25rem;
-      background: var(--surface-error);
-      border: 1px solid var(--border-error);
-      border-radius: 8px;
-      color: var(--text-primary);
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      border-radius: var(--radius);
+      color: var(--ink);
     }
     .error-banner p { margin: 0; font-size: 0.875rem; }
 
     .ai-section {
       margin-top: 2rem;
-      padding: 1.25rem;
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
+      padding: 1.5rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
     }
     .ai-header {
       display: flex;
@@ -217,30 +245,32 @@ type PageState = 'loading' | 'loaded' | 'no-channel' | 'compliance-blocked' | 'e
       flex-wrap: wrap;
     }
     .ai-badge {
-      font-size: 0.8125rem;
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      font-size: 0.875rem;
       font-weight: 600;
-      color: var(--color-primary);
+      color: var(--accent);
     }
+    .ai-icon { width: 18px; height: 18px; }
     .ai-status-chip {
       font-size: 0.75rem;
-      padding: 0.2rem 0.5rem;
-      border-radius: 4px;
-    }
-    .ai-degraded {
-      background: var(--surface-warning);
-      border: 1px solid var(--border-warning);
-      color: var(--text-secondary);
+      padding: 0.2rem 0.625rem;
+      border-radius: var(--radius-sm);
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      color: var(--warn-ink);
     }
     .ai-summary {
-      margin: 0 0 0.5rem;
+      margin: 0 0 0.75rem;
       font-size: 0.9375rem;
-      line-height: 1.6;
-      color: var(--text-primary);
+      line-height: 1.65;
+      color: var(--ink);
     }
     .ai-disclaimer {
       margin: 0;
       font-size: 0.75rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
       font-style: italic;
     }
   `],
@@ -277,6 +307,13 @@ export class DashboardComponent implements OnInit {
         this.state.set('error');
       },
     });
+  }
+
+  onThumbError(event: Event): void {
+    const img = event.target as HTMLImageElement;
+    img.style.display = 'none';
+    const fallback = img.parentElement?.querySelector('.channel-thumb-fallback');
+    if (fallback) (fallback as HTMLElement).style.display = 'flex';
   }
 
   private loadSummary(channelId: string): void {

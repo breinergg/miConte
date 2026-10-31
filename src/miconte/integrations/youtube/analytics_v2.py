@@ -18,6 +18,17 @@ from miconte.integrations.youtube.exceptions import (
 _ANALYTICS_API_BASE_URL = "https://youtubeanalytics.googleapis.com/v2"
 
 
+def _has_multi_video_filter(filters: str | None) -> bool:
+    """Check whether ``filters`` contains a video filter with 2+ IDs."""
+    if not filters:
+        return False
+    for part in filters.split(";"):
+        stripped = part.strip()
+        if stripped.startswith("video=="):
+            return "," in stripped[7:]
+    return False
+
+
 class YouTubeAnalyticsClient:
     """Production client for YouTube Analytics API v2 reports.query."""
 
@@ -55,14 +66,16 @@ class YouTubeAnalyticsClient:
         if not metrics:
             raise InvalidQueryError("At least one metric must be specified")
 
-        # Local validation: dimensions=video,day is rejected by YouTube Analytics API
+        # Local validation: dimensions=video,day requires a multi-value video filter.
+        # Per the YouTube Analytics data model: "if the video filter specifies
+        # multiple values, then video can also be specified as a dimension."
         if dimensions:
             dim_set = {d.strip().lower() for d in dimensions}
-            if "video" in dim_set and "day" in dim_set:
+            if "video" in dim_set and "day" in dim_set and not _has_multi_video_filter(filters):
                 raise InvalidQueryError(
-                    "Combination 'dimensions=video,day' is unsupported by YouTube Analytics API. "
-                    "Use dimensions=day with filters=video==<ID> for single-video daily series, "
-                    "or dimensions=video with sort=-views for channel-level video aggregates."
+                    "dimensions=video,day requires a multi-value video filter "
+                    "(filters=video==ID1,ID2,...). Use dimensions=day with "
+                    "filters=video==<ID> for a single-video daily series."
                 )
 
         params: dict[str, Any] = {

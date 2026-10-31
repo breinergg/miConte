@@ -44,7 +44,7 @@ const METRIC_LABELS: Record<string, string> = {
 
           @if (data()!.n_days_with_data === 0) {
             <app-empty-state
-              icon="📉"
+              icon="chart"
               title="Sin datos analíticos"
               description="No hay métricas diarias disponibles para este video en el período solicitado." />
           } @else {
@@ -53,7 +53,7 @@ const METRIC_LABELS: Record<string, string> = {
                 <div class="metric-row">
                   <div class="metric-header">
                     <span class="metric-name">{{ metricLabel(metric.metric_key) }}</span>
-                    <span class="metric-unit">({{ metric.unit }})</span>
+                    <span class="metric-unit">{{ metric.unit }}</span>
                   </div>
                   <div class="metric-value">
                     @if (metric.value !== null) {
@@ -81,12 +81,14 @@ const METRIC_LABELS: Record<string, string> = {
     .detail-header { margin-bottom: 1.5rem; }
     .detail-header h2 {
       margin: 0 0 0.375rem;
-      font-size: 1.25rem;
-      color: var(--text-primary);
+      font-size: 1.375rem;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.01em;
     }
     .detail-meta {
       font-size: 0.8125rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
     }
 
     .metrics-list {
@@ -95,10 +97,11 @@ const METRIC_LABELS: Record<string, string> = {
       gap: 0.75rem;
     }
     .metric-row {
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      box-shadow: var(--shadow-sm);
     }
     .metric-header {
       display: flex;
@@ -109,41 +112,42 @@ const METRIC_LABELS: Record<string, string> = {
     .metric-name {
       font-size: 0.875rem;
       font-weight: 500;
-      color: var(--text-primary);
+      color: var(--ink-soft);
     }
     .metric-unit {
       font-size: 0.75rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
     }
     .metric-value {
-      font-size: 1.25rem;
-      font-weight: 600;
-      color: var(--text-primary);
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.02em;
     }
     .na {
       font-size: 0.875rem;
       font-weight: 400;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
       font-style: italic;
     }
-    .metric-limitations { margin-top: 0.5rem; }
+    .metric-limitations { margin-top: 0.625rem; }
     .lim-tag {
       display: inline-block;
       font-size: 0.6875rem;
-      background: var(--surface-warning);
-      color: var(--text-secondary);
+      background: var(--warn-bg);
+      color: var(--warn-ink);
       padding: 0.125rem 0.5rem;
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       margin: 0.125rem 0.25rem 0.125rem 0;
     }
 
     .error-banner {
       padding: 1rem 1.25rem;
-      background: var(--surface-error);
-      border: 1px solid var(--border-error);
-      border-radius: 8px;
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      border-radius: var(--radius);
     }
-    .error-banner p { margin: 0; font-size: 0.875rem; color: var(--text-primary); }
+    .error-banner p { margin: 0; font-size: 0.875rem; color: var(--ink); }
   `],
 })
 export class VideoDetailComponent implements OnInit {

@@ -3,9 +3,10 @@
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
-from miconte.api.deps import CurrentUserDep, OAuthServiceDep, OptionalUserDep
+from miconte.api.deps import CurrentUserDep, OAuthServiceDep, OptionalUserDep, SettingsDep
 from miconte.integrations.youtube.dto import YouTubeChannelDTO
 from miconte.integrations.youtube.exceptions import (
     InsufficientPermissionsError,
@@ -70,22 +71,23 @@ def get_authorization_url(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.get("/callback", response_model=YouTubeChannelDTO)
+@router.get("/callback")
 async def oauth_callback(
     code: str,
     state: str,
     oauth_service: OAuthServiceDep,
+    settings: SettingsDep,
     current_user: OptionalUserDep = None,
-) -> YouTubeChannelDTO:
-    """Handle callback from Google, exchange code for tokens, and persist connection securely."""
+) -> RedirectResponse:
+    """Handle callback from Google, exchange code for tokens, persist connection, and redirect to frontend."""
     try:
         cur_uid = current_user.id if current_user else None
-        channel = await oauth_service.handle_callback(
+        await oauth_service.handle_callback(
             code=code,
             state=state,
             current_user_id=cur_uid,
         )
-        return channel
+        return RedirectResponse(url=f"{settings.frontend_url}/connection", status_code=302)
     except SecurityAuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except InsufficientPermissionsError as exc:

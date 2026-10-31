@@ -144,6 +144,8 @@ class AnalysisRunResponse(BaseModel):
     n_rules_triggered: int
     recommendations: list[RecommendationSchema]
     compliance_notice: str
+    data_source: str = "daily"
+    """'daily' (Path B — Analytics API) or 'snapshot' (Path A — Data API)."""
 
 
 class VideoMetricPointSchema(BaseModel):
@@ -404,6 +406,7 @@ async def run_analysis(
         n_rules_triggered=data.n_rules_triggered,
         recommendations=rec_schemas,
         compliance_notice=data.compliance_notice,
+        data_source=data.data_source,
     )
 
 

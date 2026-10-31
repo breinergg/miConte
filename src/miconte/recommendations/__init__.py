@@ -12,9 +12,11 @@ from miconte.recommendations._models import RecommendationResult, Recommendation
 from miconte.recommendations._rules import (
     APV_THRESHOLD_RATIO,
     CTR_THRESHOLD_RATIO,
+    ER_HIGH_OUTLIER_RATIO,
     ER_THRESHOLD_RATIO,
     MIN_BASELINE_N,
     VELOCITY_THRESHOLD,
+    VIEWS_THRESHOLD_RATIO,
 )
 
 __all__ = [
@@ -25,5 +27,7 @@ __all__ = [
     "APV_THRESHOLD_RATIO",
     "CTR_THRESHOLD_RATIO",
     "ER_THRESHOLD_RATIO",
+    "ER_HIGH_OUTLIER_RATIO",
     "VELOCITY_THRESHOLD",
+    "VIEWS_THRESHOLD_RATIO",
 ]

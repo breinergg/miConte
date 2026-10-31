@@ -12,7 +12,7 @@ const PRIORITY_CONFIG: Record<string, { label: string; cssClass: string }> = {
   high: { label: 'Alta', cssClass: 'priority-high' },
   medium: { label: 'Media', cssClass: 'priority-medium' },
   low: { label: 'Baja', cssClass: 'priority-low' },
-  info: { label: 'Informativa', cssClass: 'priority-info' },
+  info: { label: 'Info', cssClass: 'priority-info' },
 };
 
 @Component({
@@ -25,7 +25,7 @@ const PRIORITY_CONFIG: Record<string, { label: string; cssClass: string }> = {
         <app-loading />
       }
       @case ('no-channel') {
-        <app-empty-state icon="🔗" title="Sin canal" description="Conecta un canal para ver recomendaciones." />
+        <app-empty-state icon="link" title="Sin canal" description="Conecta un canal para ver recomendaciones." />
       }
       @case ('compliance-blocked') {
         <app-compliance-notice [message]="complianceMessage()" />
@@ -37,6 +37,9 @@ const PRIORITY_CONFIG: Record<string, { label: string; cssClass: string }> = {
         <div class="page-header">
           <h2>Recomendaciones</h2>
           <button class="run-btn" (click)="runAnalysis()" [disabled]="running()">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z"/>
+            </svg>
             {{ running() ? 'Analizando...' : 'Ejecutar análisis' }}
           </button>
         </div>
@@ -47,7 +50,7 @@ const PRIORITY_CONFIG: Record<string, { label: string; cssClass: string }> = {
 
         @if (recommendations().length === 0) {
           <app-empty-state
-            icon="💡"
+            icon="bolt"
             title="Sin recomendaciones"
             description="Ejecuta un análisis para generar recomendaciones basadas en los datos disponibles." />
         } @else {
@@ -96,69 +99,80 @@ const PRIORITY_CONFIG: Record<string, { label: string; cssClass: string }> = {
       margin-bottom: 1.25rem;
       flex-wrap: wrap;
     }
-    .page-header h2 { margin: 0; font-size: 1.25rem; color: var(--text-primary); }
+    .page-header h2 {
+      margin: 0;
+      font-size: 1.375rem;
+      font-weight: 700;
+      color: var(--ink);
+    }
     .run-btn {
-      padding: 0.5rem 1rem;
-      background: var(--color-primary);
-      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.5rem 1.125rem;
+      background: var(--accent);
+      color: var(--accent-text);
       border: none;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       cursor: pointer;
       font-size: 0.875rem;
-      font-weight: 500;
+      font-weight: 600;
+      transition: background 0.15s;
     }
-    .run-btn:hover { opacity: 0.9; }
+    .run-btn:hover { background: var(--accent-hover); }
     .run-btn:disabled { opacity: 0.5; cursor: default; }
+    .btn-icon { width: 16px; height: 16px; }
 
     .run-result {
       padding: 0.75rem 1rem;
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 6px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
       margin-bottom: 1rem;
       font-size: 0.8125rem;
-      color: var(--text-secondary);
+      color: var(--ink-soft);
     }
 
     .rec-list { display: flex; flex-direction: column; gap: 0.75rem; }
     .rec-card {
-      background: var(--surface-card);
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
-      padding: 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      box-shadow: var(--shadow-sm);
     }
     .rec-header {
       display: flex;
       align-items: center;
       gap: 0.625rem;
-      margin-bottom: 0.5rem;
+      margin-bottom: 0.625rem;
     }
     .priority-badge {
       font-size: 0.6875rem;
       font-weight: 600;
-      text-transform: uppercase;
-      padding: 0.15rem 0.5rem;
-      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      border-radius: var(--radius-sm);
     }
-    .priority-high { background: #fde8e8; color: #b91c1c; }
-    .priority-medium { background: #fef3c7; color: #92400e; }
-    .priority-low { background: #dbeafe; color: #1e40af; }
-    .priority-info { background: #e0e7ff; color: #3730a3; }
+    .priority-high { background: var(--error-bg); color: var(--error-ink); }
+    .priority-medium { background: var(--warn-bg); color: var(--warn-ink); }
+    .priority-low { background: var(--accent-subtle); color: var(--accent); }
+    .priority-info { background: var(--accent-subtle); color: var(--ink-soft); }
     .rule-code {
       font-size: 0.6875rem;
-      color: var(--text-tertiary);
-      font-family: monospace;
+      color: var(--ink-faint);
+      font-family: 'SF Mono', 'Cascadia Code', monospace;
     }
     .rec-title {
       margin: 0 0 0.375rem;
       font-size: 0.9375rem;
-      color: var(--text-primary);
+      font-weight: 600;
+      color: var(--ink);
     }
     .rec-desc {
       margin: 0;
       font-size: 0.8125rem;
-      color: var(--text-secondary);
-      line-height: 1.5;
+      color: var(--ink-soft);
+      line-height: 1.6;
     }
 
     .rec-evidence {
@@ -167,8 +181,9 @@ const PRIORITY_CONFIG: Record<string, { label: string; cssClass: string }> = {
     }
     .rec-evidence summary {
       cursor: pointer;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
       font-size: 0.75rem;
+      font-weight: 500;
     }
     .evidence-grid {
       display: grid;
@@ -182,22 +197,22 @@ const PRIORITY_CONFIG: Record<string, { label: string; cssClass: string }> = {
       gap: 0.5rem;
       padding: 0.25rem 0;
     }
-    .ev-key { color: var(--text-tertiary); }
-    .ev-val { color: var(--text-primary); font-weight: 500; }
+    .ev-key { color: var(--ink-faint); }
+    .ev-val { color: var(--ink); font-weight: 600; }
 
     .rec-footer {
       margin-top: 0.75rem;
       font-size: 0.6875rem;
-      color: var(--text-tertiary);
+      color: var(--ink-faint);
     }
 
     .error-banner {
       padding: 1rem 1.25rem;
-      background: var(--surface-error);
-      border: 1px solid var(--border-error);
-      border-radius: 8px;
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      border-radius: var(--radius);
     }
-    .error-banner p { margin: 0; font-size: 0.875rem; color: var(--text-primary); }
+    .error-banner p { margin: 0; font-size: 0.875rem; color: var(--ink); }
   `],
 })
 export class RecommendationsComponent implements OnInit {
