@@ -7,7 +7,6 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
 from miconte.api.deps import CurrentUserDep, OAuthServiceDep, OptionalUserDep, SettingsDep
-from miconte.integrations.youtube.dto import YouTubeChannelDTO
 from miconte.integrations.youtube.exceptions import (
     InsufficientPermissionsError,
     OAuthError,

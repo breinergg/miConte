@@ -467,6 +467,103 @@ def test_reach_metrics_optionality_and_source_provenance(db_session: Session) ->
 
 
 @pytest.mark.integration
+def test_analytics_api_update_preserves_existing_reach_data(db_session: Session) -> None:
+    """Analytics API update (Stage D') must not erase reach data written by Stage E.
+
+    Scenario:
+      1. Stage E (Reporting API) writes reach data for a given video+date.
+      2. Stage D' (Analytics API) re-syncs the same video+date, passing reach=None.
+      3. The reach fields must remain as written by Stage E.
+    """
+    user_repo = UserRepository(db_session)
+    channel_repo = ChannelRepository(db_session)
+    video_repo = VideoRepository(db_session)
+    metrics_repo = MetricsRepository(db_session)
+
+    user = user_repo.create_user(
+        email=f"rp_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw"
+    )
+    channel = channel_repo.upsert_channel(
+        user_id=user.id,
+        youtube_channel_id=f"UC_RP_{uuid.uuid4().hex[:8]}",
+        title="Canal Reach Preservation",
+        uploads_playlist_id="UU_RP",
+    )
+    video = video_repo.upsert_video(
+        channel_id=channel.id,
+        youtube_video_id=f"vid_rp_{uuid.uuid4().hex[:8]}",
+        title="Reach Preservation Test",
+        published_at=datetime.now(UTC),
+        duration_iso="PT5M",
+        duration_seconds=300,
+    )
+    db_session.commit()
+
+    target_date = date(2026, 10, 20)
+
+    # Step 1: Stage E (Reporting API) writes analytics + reach for this date
+    metrics_repo.record_video_daily_metric(
+        video_id=video.id,
+        metric_date=target_date,
+        views=800,
+        estimated_minutes_watched=3200,
+        average_view_duration_seconds=240,
+        average_view_percentage=60.0,
+        likes=40,
+        comments=8,
+        shares=5,
+        subscribers_gained=3,
+        subscribers_lost=0,
+        thumbnail_impressions=12000,
+        thumbnail_ctr=0.08,
+        reach_source="reporting_api_v1",
+    )
+    db_session.commit()
+
+    # Step 2: Stage D' (Analytics API) re-syncs the same date with reach=None
+    metrics_repo.record_video_daily_metric(
+        video_id=video.id,
+        metric_date=target_date,
+        views=800,
+        estimated_minutes_watched=3200,
+        average_view_duration_seconds=240,
+        average_view_percentage=60.0,
+        likes=40,
+        comments=8,
+        shares=5,
+        subscribers_gained=3,
+        subscribers_lost=0,
+        # Analytics API has no reach data — must not overwrite Stage E values
+        thumbnail_impressions=None,
+        thumbnail_ctr=None,
+        reach_source=None,
+    )
+    db_session.commit()
+
+    # Step 3: Reach fields must be intact
+    from sqlalchemy import select as sa_select
+    record = db_session.execute(
+        sa_select(VideoDailyMetric).where(
+            VideoDailyMetric.video_id == video.id,
+            VideoDailyMetric.metric_date == target_date,
+        )
+    ).scalar_one()
+
+    assert record.thumbnail_impressions == 12000, (
+        f"thumbnail_impressions erased: got {record.thumbnail_impressions}"
+    )
+    assert record.thumbnail_ctr == 0.08, (
+        f"thumbnail_ctr erased: got {record.thumbnail_ctr}"
+    )
+    assert record.reach_source == "reporting_api_v1", (
+        f"reach_source erased: got {record.reach_source}"
+    )
+
+    db_session.delete(user)
+    db_session.commit()
+
+
+@pytest.mark.integration
 def test_non_negative_likes_contract_and_anomaly_isolation(db_session: Session) -> None:
     """Verify non-negative likes contract and safe anomaly isolation.
 
