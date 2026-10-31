@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from miconte.ai._models import InterpretationResponse, LLMStatus
 from miconte.api.ai import get_ai_service
+from miconte.api.deps import check_policy_acceptance, get_current_authenticated_user
 from miconte.core.config import Settings, get_settings
 from miconte.main import app
 from miconte.models.channel import Channel
@@ -121,6 +122,7 @@ def _cleanup_overrides() -> Generator[None]:
     yield
     app.dependency_overrides.pop(get_ai_service, None)
     app.dependency_overrides.pop(get_settings, None)
+    app.dependency_overrides.pop(check_policy_acceptance, None)
 
 
 def _headers(user: User) -> dict[str, str]:
@@ -129,6 +131,7 @@ def _headers(user: User) -> dict[str, str]:
 
 def _client_gate_closed() -> TestClient:
     """No overrides — analytics_real_data_enabled=False (default)."""
+    app.dependency_overrides[check_policy_acceptance] = get_current_authenticated_user
     return TestClient(app, raise_server_exceptions=True)
 
 
@@ -136,6 +139,7 @@ def _client_gate_open(ai_response: InterpretationResponse) -> TestClient:
     """Gate open + stubbed AI service."""
     app.dependency_overrides[get_settings] = lambda: _GATE_OPEN_SETTINGS
     app.dependency_overrides[get_ai_service] = lambda: _StubAIService(ai_response)
+    app.dependency_overrides[check_policy_acceptance] = get_current_authenticated_user
     return TestClient(app, raise_server_exceptions=True)
 
 

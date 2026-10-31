@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
+from miconte.api.deps import check_policy_acceptance, get_current_authenticated_user
 from miconte.core.config import Settings, get_settings
 from miconte.integrations.youtube.exceptions import (
     InsufficientPermissionsError,
@@ -568,6 +569,7 @@ def test_oauth_api_endpoints_multitenancy_isolation_idor(
     db_session: Session, test_settings: Settings
 ) -> None:
     app.dependency_overrides[get_settings] = lambda: test_settings
+    app.dependency_overrides[check_policy_acceptance] = get_current_authenticated_user
     try:
         user_repo = UserRepository(db_session)
         user_a = user_repo.create_user(
@@ -647,6 +649,7 @@ def test_oauth_api_endpoints_multitenancy_isolation_idor(
 
     finally:
         app.dependency_overrides.pop(get_settings, None)
+        app.dependency_overrides.pop(check_policy_acceptance, None)
 
 
 @pytest.mark.integration
@@ -1316,3 +1319,170 @@ def test_disconnect_analysis_runs_and_recommendations_deleted(
     db_session.expire_all()
     assert db_session.get(AnalysisRun, ar_pk) is None
     assert db_session.get(Recommendation, rec_pk) is None
+
+
+@pytest.mark.integration
+def test_refresh_request_payload_contains_all_required_fields(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """get_valid_access_token() sends a correctly structured refresh request to Google.
+
+    Verifies:
+    - Content-Type is application/x-www-form-urlencoded (not JSON)
+    - All four fields present: client_id, client_secret, refresh_token, grant_type
+    - client_id matches settings.youtube_client_id (not empty, not the google_login fallback)
+    - grant_type is 'refresh_token'
+    - No Authorization header (credentials in body, not header)
+    """
+    import urllib.parse  # noqa: PLC0415
+
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"rfp_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw"
+    )
+    db_session.commit()
+
+    yt_id = f"UC_RFP_{uuid.uuid4().hex[:8]}"
+    aad_ac = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="access",
+    )
+    aad_rf = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="refresh",
+    )
+    user_repo.upsert_oauth_connection(
+        user_id=user.id,
+        external_channel_id=yt_id,
+        granted_scopes=" ".join(REQUIRED_SCOPES),
+        platform="youtube",
+        encrypted_access_token=crypto_svc.encrypt("ya29.expired_access", aad=aad_ac),
+        encrypted_refresh_token=crypto_svc.encrypt("1//valid_refresh_token", aad=aad_rf),
+        token_expires_at=datetime.now(UTC) - timedelta(hours=2),  # expired
+        is_active=True,
+    )
+    db_session.commit()
+
+    captured_requests: list[httpx.Request] = []
+
+    def mock_refresh_success(req: httpx.Request) -> httpx.Response:
+        captured_requests.append(req)
+        return httpx.Response(200, json={
+            "access_token": "ya29.new_access_token",
+            "token_type": "Bearer",
+            "expires_in": 3599,
+            "scope": " ".join(REQUIRED_SCOPES),
+        })
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(transport=httpx.MockTransport(mock_refresh_success))
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        token = await service.get_valid_access_token(
+            user_id=user.id, external_channel_id=yt_id
+        )
+        assert token == "ya29.new_access_token"
+
+    asyncio.run(_run())
+
+    assert len(captured_requests) == 1, "Expected exactly one refresh request to Google"
+    req = captured_requests[0]
+
+    # Content-Type must be form-encoded
+    got_ct = req.headers.get("content-type", "")
+    assert got_ct == "application/x-www-form-urlencoded", (
+        f"Content-Type must be application/x-www-form-urlencoded, got: {got_ct}"
+    )
+
+    # No Authorization header (credentials travel in the request body)
+    assert "authorization" not in req.headers, (
+        "Authorization header must NOT be set in refresh request"
+    )
+
+    # Parse and validate payload
+    body = urllib.parse.parse_qs(req.content.decode("utf-8"))
+    required_fields = {"client_id", "client_secret", "refresh_token", "grant_type"}
+    missing = required_fields - body.keys()
+    assert not missing, f"Missing fields in refresh payload: {missing}"
+
+    assert body["grant_type"] == ["refresh_token"], (
+        f"grant_type must be 'refresh_token', got {body['grant_type']}"
+    )
+    assert body["client_id"][0] == test_settings.youtube_client_id, (
+        "client_id must match settings.youtube_client_id (not empty, not google_login fallback)"
+    )
+    assert body["client_id"][0] != "", "client_id must not be empty"
+    assert body["refresh_token"][0] == "1//valid_refresh_token", (
+        "refresh_token must be decrypted before sending"
+    )
+
+
+@pytest.mark.integration
+def test_invalid_request_during_refresh_does_not_delete_credentials(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """invalid_request from Google must NOT purge stored tokens or deactivate connection.
+
+    Only invalid_grant (revocation) should trigger credential deletion.
+    invalid_request indicates a malformed request (e.g. empty client_id from .env not loaded),
+    not a user consent revocation.
+    """
+    user_repo = UserRepository(db_session)
+    user = user_repo.create_user(
+        email=f"inv_req_{uuid.uuid4().hex[:8]}@example.com", hashed_password="pw"
+    )
+    db_session.commit()
+
+    yt_id = f"UC_INVREQ_{uuid.uuid4().hex[:8]}"
+    aad_rf = build_token_aad(
+        user_id=str(user.id), platform="youtube",
+        external_channel_id=yt_id, credential_kind="refresh",
+    )
+    stored_enc_refresh = crypto_svc.encrypt("1//still_valid_refresh", aad=aad_rf)
+    user_repo.upsert_oauth_connection(
+        user_id=user.id,
+        external_channel_id=yt_id,
+        granted_scopes=" ".join(REQUIRED_SCOPES),
+        platform="youtube",
+        encrypted_refresh_token=stored_enc_refresh,
+        token_expires_at=datetime.now(UTC) - timedelta(hours=2),
+        is_active=True,
+    )
+    db_session.commit()
+
+    def mock_invalid_request(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={
+            "error": "invalid_request",
+            "error_description": "Could not determine client ID from request.",
+        })
+
+    async def _run() -> None:
+        mock_http = httpx.AsyncClient(transport=httpx.MockTransport(mock_invalid_request))
+        service = OAuthService(
+            session=db_session, settings=test_settings,
+            crypto_service=crypto_svc, http_client=mock_http,
+        )
+        with pytest.raises(OAuthError) as exc_info:
+            await service.get_valid_access_token(
+                user_id=user.id, external_channel_id=yt_id
+            )
+        assert "invalid_request" in str(exc_info.value)
+
+    asyncio.run(_run())
+
+    # Credentials must be preserved — this is NOT a revocation
+    db_session.expire_all()
+    conn = user_repo.get_oauth_connection(
+        user_id=user.id, external_channel_id=yt_id, platform="youtube"
+    )
+    assert conn is not None, "Connection must still exist after invalid_request"
+    assert conn.is_active is True, "Connection must stay active after invalid_request"
+    assert conn.encrypted_refresh_token == stored_enc_refresh, (
+        "Refresh token must NOT be deleted on invalid_request — only invalid_grant deletes it"
+    )

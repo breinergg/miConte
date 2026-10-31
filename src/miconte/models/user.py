@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
+    from miconte.models.policy import PolicyAcceptance
     from miconte.models.session import UserSession
 
 from miconte.persistence.base import Base
@@ -61,6 +62,11 @@ class User(Base):
     )
     channels: Mapped[list["Channel"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "Channel",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    policy_acceptances: Mapped[list["PolicyAcceptance"]] = relationship(
+        "PolicyAcceptance",
         back_populates="user",
         cascade="all, delete-orphan",
     )

@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from miconte.api.analytics import get_analytics_service
-from miconte.api.deps import DbSessionDep
+from miconte.api.deps import DbSessionDep, check_policy_acceptance, get_current_authenticated_user
 from miconte.core.config import Settings
 from miconte.main import app
 from miconte.models.channel import Channel
@@ -52,20 +52,23 @@ def client() -> Generator[TestClient]:
         return AnalyticsService(session, settings=_ENABLED_SETTINGS)
 
     app.dependency_overrides[get_analytics_service] = _override_service
+    app.dependency_overrides[check_policy_acceptance] = get_current_authenticated_user
     try:
         yield TestClient(app, raise_server_exceptions=True)
     finally:
         app.dependency_overrides.pop(get_analytics_service, None)
+        app.dependency_overrides.pop(check_policy_acceptance, None)
 
 
 @pytest.fixture
 def client_gate_disabled() -> Generator[TestClient]:
     """TestClient with analytics_real_data_enabled=False (default) — gate closed."""
     app.dependency_overrides.pop(get_analytics_service, None)
+    app.dependency_overrides[check_policy_acceptance] = get_current_authenticated_user
     try:
         yield TestClient(app, raise_server_exceptions=True)
     finally:
-        pass
+        app.dependency_overrides.pop(check_policy_acceptance, None)
 
 
 @pytest.fixture

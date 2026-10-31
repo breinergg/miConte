@@ -63,6 +63,9 @@ import { SynchronizableChannel } from '../models/channel.model';
         </ul>
 
         <div class="sidebar-footer">
+          <a routerLink="/privacy" class="privacy-link">Privacidad</a>
+          <span class="footer-sep">·</span>
+          <a routerLink="/terms" class="privacy-link">Términos</a>
           <span class="version-tag">v0.1.0</span>
         </div>
       </nav>
@@ -190,6 +193,19 @@ import { SynchronizableChannel } from '../models/channel.model';
     .sidebar-footer {
       padding: 0.75rem 1.25rem 0;
       border-top: 1px solid var(--sidebar-hover);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .privacy-link {
+      font-size: 0.6875rem;
+      color: var(--sidebar-ink-faint);
+      text-decoration: none;
+    }
+    .privacy-link:hover { text-decoration: underline; color: var(--sidebar-ink); }
+    .footer-sep {
+      font-size: 0.6875rem;
+      color: var(--sidebar-ink-faint);
     }
     .version-tag {
       font-size: 0.6875rem;

@@ -150,6 +150,41 @@ def get_current_authenticated_user(
 CurrentUserDep = Annotated[User, Depends(get_current_authenticated_user)]
 
 
+def check_policy_acceptance(
+    user: Annotated[User, Depends(get_current_authenticated_user)],
+    session: Annotated[Session, Depends(get_db_session)],
+) -> User:
+    """Verify the authenticated user has accepted all current policy documents.
+
+    Raises HTTP 403 with a structured payload when any required document has
+    not been accepted at its current version.  This dependency is applied to
+    every protected router so the check runs at the FastAPI dependency layer,
+    not only in Angular.
+    """
+    from miconte.core.policy import REQUIRED_ACCEPTANCES
+    from miconte.persistence.repositories.policy_repo import PolicyRepository
+
+    repo = PolicyRepository(session)
+    missing = repo.missing_current_acceptances(user.id)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "POLICY_NOT_ACCEPTED",
+                "message": (
+                    "Debes aceptar la política de privacidad y los términos de uso "
+                    "antes de continuar."
+                ),
+                "missing_documents": missing,
+                "current_versions": dict(REQUIRED_ACCEPTANCES),
+            },
+        )
+    return user
+
+
+PolicyAcceptanceDep = Annotated[User, Depends(check_policy_acceptance)]
+
+
 def get_optional_authenticated_user(
     session: DbSessionDep,
     settings: SettingsDep,

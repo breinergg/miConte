@@ -6,6 +6,7 @@ import { SynchronizableChannel } from '../../models/channel.model';
 import { ConnectionStatusResponse } from '../../models/oauth.model';
 import { SyncRunResponse } from '../../models/sync.model';
 import { ApiError } from '../../services/api.service';
+import { RouterLink } from '@angular/router';
 import { LoadingSpinnerComponent } from '../../components/loading-spinner/loading-spinner';
 import { EmptyStateComponent } from '../../components/empty-state/empty-state';
 import { DatePipe } from '@angular/common';
@@ -13,7 +14,7 @@ import { DatePipe } from '@angular/common';
 @Component({
   selector: 'app-connection',
   standalone: true,
-  imports: [LoadingSpinnerComponent, EmptyStateComponent, DatePipe],
+  imports: [RouterLink, LoadingSpinnerComponent, EmptyStateComponent, DatePipe],
   template: `
     @switch (state()) {
       @case ('loading') {
@@ -24,6 +25,29 @@ import { DatePipe } from '@angular/common';
       }
       @case ('loaded') {
         <h2 class="page-title">Conexión de YouTube</h2>
+
+        <section class="api-disclosure">
+          <h3>Uso de YouTube API Services</h3>
+          <p>
+            miConte utiliza <strong>YouTube API Services</strong> para acceder a los datos analíticos
+            privados de tu canal. Al conectar tu canal de YouTube aceptas los
+            <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">Términos de Servicio de YouTube</a>
+            y la
+            <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Política de Privacidad de Google</a>.
+          </p>
+          <p>
+            miConte almacena localmente: credenciales de acceso OAuth (cifradas con AES-256-GCM),
+            metadatos del canal, metadatos de los videos (título, fecha, duración) y métricas
+            de YouTube Analytics (vistas, minutos vistos, suscriptores, interacciones). Estos datos
+            no se comparten con terceros ni se utilizan para derivar métricas no previstas en la
+            autorización. Puedes revocar el acceso en cualquier momento desde
+            <a href="https://security.google.com/settings/security/permissions" target="_blank" rel="noopener noreferrer">la configuración de seguridad de Google</a>
+            o usando el botón «Desconectar» en esta página.
+          </p>
+          <p class="disclosure-privacy-link">
+            <a routerLink="/privacy">Ver política de privacidad completa de miConte →</a>
+          </p>
+        </section>
 
         <section class="connect-section">
           <div class="connect-header">
@@ -135,6 +159,33 @@ import { DatePipe } from '@angular/common';
       color: var(--ink-soft);
       margin: 0;
       line-height: 1.6;
+    }
+
+    .api-disclosure {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .api-disclosure h3 {
+      margin: 0 0 0.625rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .api-disclosure p {
+      margin: 0 0 0.5rem;
+      font-size: 0.8125rem;
+      color: var(--ink-soft);
+      line-height: 1.65;
+    }
+    .api-disclosure a {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+    .disclosure-privacy-link {
+      margin-top: 0.375rem;
     }
 
     .connect-section {

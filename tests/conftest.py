@@ -163,6 +163,7 @@ def pytest_configure(config: pytest.Config) -> None:  # noqa: ARG001
 # ---------------------------------------------------------------------------
 
 
+
 @pytest.fixture(scope="session", autouse=True)
 def _verify_test_database_identity() -> Generator[None]:
     """Abort the session if the engine is NOT connected to the authorized test DB.

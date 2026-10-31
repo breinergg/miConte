@@ -7,6 +7,7 @@ are registered with Base.metadata for migrations and repositories.
 from miconte.models.analysis import AnalysisRun, Recommendation, SyncRun
 from miconte.models.channel import Channel, ChannelPublicSnapshot
 from miconte.models.metrics import ChannelDailyMetric, VideoDailyMetric, VideoPeriodMetric
+from miconte.models.policy import PolicyAcceptance
 from miconte.models.reporting import ReportingReportIngestion
 from miconte.models.session import UserSession
 from miconte.models.user import OAuthConnection, User
@@ -20,6 +21,7 @@ __all__ = [
     "ChannelDailyMetric",
     "ChannelPublicSnapshot",
     "OAuthConnection",
+    "PolicyAcceptance",
     "Recommendation",
     "ReportingReportIngestion",
     "SyncRun",

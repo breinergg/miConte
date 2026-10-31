@@ -6,7 +6,13 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
-from miconte.api.deps import CurrentUserDep, OAuthServiceDep, OptionalUserDep, SettingsDep
+from miconte.api.deps import (
+    CurrentUserDep,
+    OAuthServiceDep,
+    OptionalUserDep,
+    PolicyAcceptanceDep,
+    SettingsDep,
+)
 from miconte.integrations.youtube.exceptions import (
     InsufficientPermissionsError,
     OAuthError,
@@ -57,7 +63,7 @@ class DisconnectResponse(BaseModel):
 
 @router.get("/authorize", response_model=AuthorizeResponse)
 def get_authorization_url(
-    current_user: CurrentUserDep,
+    current_user: PolicyAcceptanceDep,
     oauth_service: OAuthServiceDep,
 ) -> AuthorizeResponse:
     """Generate authorization consent URL and CSRF state token for the authenticated user."""
@@ -78,7 +84,7 @@ async def oauth_callback(
     settings: SettingsDep,
     current_user: OptionalUserDep = None,
 ) -> RedirectResponse:
-    """Handle callback from Google, exchange code for tokens, persist connection, and redirect to frontend."""
+    """Handle Google OAuth callback: exchange code, persist tokens, redirect to frontend."""
     try:
         cur_uid = current_user.id if current_user else None
         await oauth_service.handle_callback(
@@ -103,7 +109,7 @@ async def oauth_callback(
 @router.get("/status", response_model=ConnectionStatusResponse)
 def get_connection_status(
     channel_id: str,
-    current_user: CurrentUserDep,
+    current_user: PolicyAcceptanceDep,
     oauth_service: OAuthServiceDep,
 ) -> ConnectionStatusResponse:
     """Get active connection status for the authenticated user without exposing credentials."""

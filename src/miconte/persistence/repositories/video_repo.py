@@ -142,6 +142,18 @@ class VideoRepository:
         )
         return self.session.execute(stmt).scalar_one_or_none()
 
+    def delete_by_youtube_id(self, youtube_video_id: str) -> bool:
+        """Delete a video and all cascading data (metrics, snapshots) by its YouTube ID.
+
+        Returns True if the video existed and was deleted, False if not found.
+        Caller must commit or flush after this call.
+        """
+        video = self.get_by_youtube_id(youtube_video_id)
+        if video is None:
+            return False
+        self.session.delete(video)
+        return True
+
     def get_latest_snapshots_for_channel(
         self, channel_id: uuid.UUID,
     ) -> list[VideoPublicSnapshot]:

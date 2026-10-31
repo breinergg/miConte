@@ -466,6 +466,7 @@ class SyncService:
         # 1. Paginate playlist items to retrieve video IDs
         collected_video_ids: list[str] = []
         next_page: str | None = None
+        playlist_fully_fetched = False  # True only when all pages were retrieved
 
         while len(collected_video_ids) < max_videos:
             remaining = max_videos - len(collected_video_ids)
@@ -488,13 +489,17 @@ class SyncService:
                 operation_name="playlistItems.list",
             )
             if not items:
+                playlist_fully_fetched = True  # No more items — playlist exhausted
                 break
 
             for it in items:
                 collected_video_ids.append(it.video_id)
 
             if not next_page:
+                playlist_fully_fetched = True  # No more pages — playlist exhausted
                 break
+        # If the while condition (len < max_videos) became False, playlist_fully_fetched
+        # stays False — we may have stopped early due to the per-sync cap.
 
         if not collected_video_ids:
             return (
@@ -543,14 +548,136 @@ class SyncService:
                 records_count += 1
 
         self.session.flush()
+
+        # Deletion check: only when the full playlist was fetched (not truncated by max_videos).
+        # Compares the current playlist IDs against the stored catalog; any stored video absent
+        # from the playlist is confirmed via Data API before being deleted.
+        deletion_detail = ""
+        if playlist_fully_fetched and collected_video_ids:
+            fetched_ids = set(collected_video_ids)
+            _, deleted_count = await self._purge_deleted_videos(
+                channel=channel,
+                access_token=access_token,
+                fetched_yt_ids=fetched_ids,
+            )
+            if deleted_count > 0:
+                deletion_detail = f"; purged {deleted_count} deleted video(s) from catalog"
+
         return (
             SyncStageResultDTO(
                 stage="videos_catalog",
                 status="succeeded",
                 records_processed=records_count,
-                details=f"Synchronized {len(video_dtos)} videos and snapshots",
+                details=f"Synchronized {len(video_dtos)} videos and snapshots{deletion_detail}",
             ),
             records_count,
+        )
+
+    async def _purge_deleted_videos(
+        self,
+        *,
+        channel: Channel,
+        access_token: str,
+        fetched_yt_ids: set[str],
+    ) -> tuple[SyncStageResultDTO, int]:
+        """Confirm stored-but-missing videos via Data API and delete only those absent.
+
+        Compares the stored catalog against *fetched_yt_ids* (the complete set returned
+        by the current playlist sync). For each candidate that is absent from the playlist,
+        a Data API ``videos.list`` call is made (in batches of 50) to distinguish genuinely
+        deleted videos from any edge-case omission. Only a definitive empty response triggers
+        deletion. Network errors, timeouts, or any API exception skip the purge entirely so
+        that ambiguous results never cause data loss.
+
+        Deletion cascades via the ORM to ``video_public_snapshots``, ``video_daily_metrics``,
+        and ``video_period_metrics`` (all carry ``cascade="all, delete-orphan"`` in the model).
+        """
+        stored_videos = self.video_repo.get_all_videos_for_channel(channel.id)
+        candidate_ids = [
+            v.youtube_video_id
+            for v in stored_videos
+            if v.youtube_video_id not in fetched_yt_ids
+        ]
+
+        if not candidate_ids:
+            return (
+                SyncStageResultDTO(
+                    stage="video_deletion_check",
+                    status="succeeded",
+                    records_processed=0,
+                    details="No orphaned video candidates found",
+                ),
+                0,
+            )
+
+        try:
+            still_alive_dtos = await self._with_retry(
+                lambda ids=candidate_ids: self.data_client.list_videos_batch(
+                    video_ids=ids,
+                    access_token=access_token,
+                ),
+                operation_name="videos.list_deletion_check",
+            )
+        except Exception as exc:
+            # Network error, timeout, or API error: ambiguous — do NOT delete.
+            logger.warning(
+                "Video deletion check failed for channel %s; no videos deleted (ambiguous): %s",
+                channel.youtube_channel_id,
+                exc,
+            )
+            return (
+                SyncStageResultDTO(
+                    stage="video_deletion_check",
+                    status="partially_succeeded",
+                    records_processed=0,
+                    details=f"Deletion check skipped (ambiguous API response): {exc}",
+                ),
+                0,
+            )
+
+        alive_ids = {dto.youtube_video_id for dto in still_alive_dtos}
+        confirmed_deleted = [vid for vid in candidate_ids if vid not in alive_ids]
+
+        if not confirmed_deleted:
+            return (
+                SyncStageResultDTO(
+                    stage="video_deletion_check",
+                    status="succeeded",
+                    records_processed=0,
+                    details=(
+                        f"Checked {len(candidate_ids)} orphaned candidate(s); "
+                        "all confirmed still active on YouTube"
+                    ),
+                ),
+                0,
+            )
+
+        deleted_count = 0
+        for yt_id in confirmed_deleted:
+            deleted = self.video_repo.delete_by_youtube_id(yt_id)
+            if deleted:
+                deleted_count += 1
+
+        if deleted_count > 0:
+            self.session.flush()
+
+        logger.info(
+            "Purged %d confirmed-deleted video(s) for channel %s",
+            deleted_count,
+            channel.youtube_channel_id,
+        )
+
+        return (
+            SyncStageResultDTO(
+                stage="video_deletion_check",
+                status="succeeded",
+                records_processed=deleted_count,
+                details=(
+                    f"Checked {len(candidate_ids)} orphaned candidate(s); "
+                    f"confirmed deleted and purged: {deleted_count}"
+                ),
+            ),
+            deleted_count,
         )
 
     async def _sync_channel_daily_analytics(

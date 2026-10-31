@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
+from miconte.api.deps import check_policy_acceptance, get_current_authenticated_user
 from miconte.core.config import Settings, get_settings
 from miconte.main import app
 from miconte.models.channel import Channel, ChannelPublicSnapshot
@@ -1063,6 +1064,7 @@ def test_sync_api_endpoints_and_user_isolation(
     )
 
     app.dependency_overrides[get_settings] = lambda: test_settings
+    app.dependency_overrides[check_policy_acceptance] = get_current_authenticated_user
     try:
         client = TestClient(app)
 
@@ -1101,6 +1103,7 @@ def test_sync_api_endpoints_and_user_isolation(
 
     finally:
         app.dependency_overrides.pop(get_settings, None)
+        app.dependency_overrides.pop(check_policy_acceptance, None)
 
 
 @pytest.mark.integration
@@ -3088,3 +3091,181 @@ def test_periodic_loop_calls_revalidate_all_connections() -> None:
     assert call_counts["revalidate"] == 1, (
         "revalidate_all_connections must be called from _periodic_loop"
     )
+
+
+# ── Video retention: _purge_deleted_videos ──────────────────────────────────
+
+
+@pytest.mark.integration
+def test_purge_deleted_videos_confirmed_deletion(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """A video absent from both the playlist and Data API is deleted; cascade removes metrics."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from miconte.integrations.youtube.dto import YouTubeVideoDTO
+    from miconte.persistence.repositories.metrics_repo import MetricsRepository
+    from miconte.persistence.repositories.video_repo import VideoRepository
+
+    run_uid = uuid.uuid4().hex[:6]
+    ch_id = f"UC_PURGE_{run_uid}"
+    vid_kept = f"VID_K_{run_uid}"
+    vid_deleted = f"VID_D_{run_uid}"
+
+    user, channel = _setup_authorized_channel(db_session, crypto_svc, channel_id_str=ch_id)
+
+    video_repo = VideoRepository(db_session)
+    metrics_repo = MetricsRepository(db_session)
+
+    video_repo.upsert_video(
+        channel_id=channel.id,
+        youtube_video_id=vid_kept,
+        title="Kept Video",
+        published_at=datetime(2024, 1, 1, tzinfo=UTC),
+        duration_iso="PT1M",
+        duration_seconds=60,
+    )
+    v_gone = video_repo.upsert_video(
+        channel_id=channel.id,
+        youtube_video_id=vid_deleted,
+        title="Deleted Video",
+        published_at=datetime(2024, 1, 2, tzinfo=UTC),
+        duration_iso="PT2M",
+        duration_seconds=120,
+    )
+
+    # Seed a metric row for the soon-to-be-deleted video to confirm cascade
+    metrics_repo.record_video_daily_metric(
+        video_id=v_gone.id,
+        metric_date=date(2024, 1, 15),
+        views=100,
+        estimated_minutes_watched=50,
+        average_view_duration_seconds=30,
+        average_view_percentage=50.0,
+        likes=5,
+        comments=0,
+        shares=0,
+        subscribers_gained=1,
+        subscribers_lost=0,
+    )
+    db_session.commit()
+
+    # Verify both videos are stored
+    stored_before = {v.youtube_video_id for v in video_repo.get_all_videos_for_channel(channel.id)}
+    assert stored_before == {vid_kept, vid_deleted}
+
+    # Mock Data API: only returns the kept video (deleted one is absent — confirmed gone)
+    kept_dto = YouTubeVideoDTO(
+        youtube_video_id=vid_kept,
+        title="Kept Video",
+        duration_iso="PT1M",
+        duration_seconds=60,
+        published_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    mock_data_client = MagicMock()
+    mock_data_client.list_videos_batch = AsyncMock(return_value=[kept_dto])
+
+    oauth_svc = OAuthService(
+        session=db_session, settings=test_settings, crypto_service=crypto_svc
+    )
+    service = SyncService(
+        session=db_session,
+        settings=test_settings,
+        oauth_service=oauth_svc,
+        data_client=mock_data_client,
+    )
+
+    # Only vid_kept was in the current playlist
+    fetched_ids: set[str] = {vid_kept}
+    result_dto, deleted_count = asyncio.run(
+        service._purge_deleted_videos(
+            channel=channel,
+            access_token="ya29.mock_purge_token",
+            fetched_yt_ids=fetched_ids,
+        )
+    )
+    db_session.flush()
+
+    assert deleted_count == 1, "Exactly one confirmed-deleted video must be purged"
+    assert result_dto.status == "succeeded"
+    assert "1" in result_dto.details
+
+    # Deleted video and its metrics are gone
+    assert video_repo.get_by_youtube_id(vid_deleted) is None, "Deleted video must not exist"
+    # Kept video is untouched
+    assert video_repo.get_by_youtube_id(vid_kept) is not None, "Kept video must remain"
+
+
+@pytest.mark.integration
+def test_purge_deleted_videos_network_error_preserves_data(
+    db_session: Session,
+    test_settings: Settings,
+    crypto_svc: TokenEncryptionService,
+) -> None:
+    """A network error during the Data API check must NOT delete any video (ambiguous result)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import httpx
+
+    from miconte.persistence.repositories.video_repo import VideoRepository
+
+    run_uid = uuid.uuid4().hex[:6]
+    ch_id = f"UC_PURGE_ERR_{run_uid}"
+    vid_a = f"VID_A_{run_uid}"
+    vid_b = f"VID_B_{run_uid}"
+
+    user, channel = _setup_authorized_channel(db_session, crypto_svc, channel_id_str=ch_id)
+
+    video_repo = VideoRepository(db_session)
+    video_repo.upsert_video(
+        channel_id=channel.id,
+        youtube_video_id=vid_a,
+        title="Video A",
+        published_at=datetime(2024, 1, 1, tzinfo=UTC),
+        duration_iso="PT1M",
+        duration_seconds=60,
+    )
+    video_repo.upsert_video(
+        channel_id=channel.id,
+        youtube_video_id=vid_b,
+        title="Video B",
+        published_at=datetime(2024, 1, 2, tzinfo=UTC),
+        duration_iso="PT2M",
+        duration_seconds=120,
+    )
+    db_session.commit()
+
+    # Data API call raises a network error — result is ambiguous
+    mock_data_client = MagicMock()
+    mock_data_client.list_videos_batch = AsyncMock(
+        side_effect=httpx.RequestError("simulated network error")
+    )
+
+    oauth_svc = OAuthService(
+        session=db_session, settings=test_settings, crypto_service=crypto_svc
+    )
+    service = SyncService(
+        session=db_session,
+        settings=test_settings,
+        oauth_service=oauth_svc,
+        data_client=mock_data_client,
+    )
+
+    # Neither video is in the "current" playlist — both are candidates
+    result_dto, deleted_count = asyncio.run(
+        service._purge_deleted_videos(
+            channel=channel,
+            access_token="ya29.mock_error_token",
+            fetched_yt_ids=set(),
+        )
+    )
+    db_session.flush()
+
+    assert deleted_count == 0, "No video must be deleted on network error (ambiguous result)"
+    assert result_dto.status == "partially_succeeded"
+
+    # Both videos must still exist
+    assert video_repo.get_by_youtube_id(vid_a) is not None
+    assert video_repo.get_by_youtube_id(vid_b) is not None

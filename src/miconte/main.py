@@ -10,8 +10,10 @@ from miconte import __version__
 from miconte.api.ai import router as ai_router
 from miconte.api.analytics import router as analytics_router
 from miconte.api.auth import router as auth_router
+from miconte.api.deps import check_policy_acceptance
 from miconte.api.health import router as health_router
 from miconte.api.oauth import router as oauth_router
+from miconte.api.policy import router as policy_router
 from miconte.api.sync import router as sync_router
 from miconte.core.config import get_settings
 from miconte.services.scheduler import default_scheduler
@@ -53,12 +55,19 @@ def create_app() -> FastAPI:
             allow_headers=["Content-Type", "Authorization", "X-User-Id"],
         )
 
+    from fastapi import Depends
+
+    policy_dep = [Depends(check_policy_acceptance)]
+
     application.include_router(health_router)
     application.include_router(auth_router)
     application.include_router(oauth_router)
-    application.include_router(sync_router)
-    application.include_router(analytics_router)
-    application.include_router(ai_router)
+    # Policy router: no policy check — users must reach these endpoints to accept
+    application.include_router(policy_router)
+    # Protected routers: blocked until the user has accepted current documents
+    application.include_router(sync_router, dependencies=policy_dep)
+    application.include_router(analytics_router, dependencies=policy_dep)
+    application.include_router(ai_router, dependencies=policy_dep)
     return application
 
 
