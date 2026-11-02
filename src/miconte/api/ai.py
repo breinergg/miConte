@@ -18,13 +18,19 @@ The endpoint:
 
 from __future__ import annotations
 
+import json
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from miconte.ai._chat import build_chat_messages, generate_chat_reply, serialize_context
 from miconte.ai._models import LLMStatus
+from miconte.ai._prompts import (
+    build_chat_system_prompt,
+    build_creator_system_prompt,
+)
 from miconte.ai._service import AIService
 from miconte.api.deps import CurrentUserDep, DbSessionDep, SettingsDep
 from miconte.persistence.repositories.channel_repo import ChannelRepository
@@ -73,6 +79,42 @@ class AIInterpretRequest(BaseModel):
     # real_data is intentionally absent: the server derives this from
     # settings.analytics_real_data_enabled — the client cannot assert
     # the origin of the data it supplies.
+    # mode: "creator" produces structured 4-section output for the dashboard button.
+    mode: Literal["creator", "technical"] = "creator"
+
+
+class ChatMessageSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=False)
+
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=4000)
+
+
+class ChannelContextSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=False)
+
+    title: str
+    period_label: str
+    metrics: list[MetricInputSchema] = Field(default_factory=list)
+    recommendations: list[RecommendationInputSchema] = Field(default_factory=list)
+
+
+class AIChatRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=False)
+
+    message: str = Field(min_length=1, max_length=2000)
+    history: list[ChatMessageSchema] = Field(default_factory=list, max_length=20)
+    channel_context: ChannelContextSchema
+
+
+class AIChatResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=False)
+
+    channel_id: uuid.UUID
+    reply: str | None
+    ai_status: str
+    degraded: bool
+    note: str
 
 
 class AIInterpretResponse(BaseModel):
@@ -143,12 +185,15 @@ async def interpret_channel_analytics(
 
     # Compliance gate is open: the server can vouch that derived-data use is
     # authorized.  Pass real_data=True so AIService records the correct status.
+    system_prompt = build_creator_system_prompt() if body.mode == "creator" else None
+
     result = await svc.interpret_channel_analytics(
         channel_title=body.channel_title,
         period_label=body.period_label,
         metrics=[m.model_dump() for m in body.metrics],
         recommendations=[r.model_dump() for r in body.recommendations],
         real_data=True,
+        system_prompt_override=system_prompt,
     )
 
     note: str
@@ -177,5 +222,96 @@ async def interpret_channel_analytics(
         ai_summary=result.summary,
         provider=result.provider,
         degraded=result.degraded,
+        note=note,
+    )
+
+
+# ─── Chat endpoint ────────────────────────────────────────────────────────────
+
+@router.post(
+    "/channels/{channel_id}/ai/chat",
+    response_model=AIChatResponse,
+    summary="Conversational AI chat with channel context",
+)
+async def chat_with_channel(
+    channel_id: uuid.UUID,
+    body: AIChatRequest,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    settings: SettingsDep,
+) -> AIChatResponse:
+    """Free-form conversation with miConte AI, grounded in the channel's analytics.
+
+    History is managed exclusively by the client and sent with each request;
+    nothing is persisted in PostgreSQL.  A maximum of 20 prior turns is accepted.
+
+    The endpoint always returns HTTP 200 — LLM failures are signalled through
+    ``ai_status``, never as error status codes.
+    """
+    channel_repo = ChannelRepository(session)
+    channel = channel_repo.get_by_id(channel_id)
+    if channel is None or channel.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Channel '{channel_id}' not found or does not belong to this user.",
+        )
+
+    if not settings.analytics_real_data_enabled:
+        return AIChatResponse(
+            channel_id=channel_id,
+            reply=None,
+            ai_status=LLMStatus.unavailable.value,
+            degraded=True,
+            note=(
+                "El chat de IA no está disponible hasta que se cumplan los requisitos "
+                "de cumplimiento de YouTube Data API (MICONTE_ANALYTICS_REAL_DATA_ENABLED)."
+            ),
+        )
+
+    if settings.llm_provider.lower() != "ollama":
+        return AIChatResponse(
+            channel_id=channel_id,
+            reply=None,
+            ai_status=LLMStatus.disabled.value,
+            degraded=True,
+            note="El proveedor LLM no es Ollama o está deshabilitado.",
+        )
+
+    ctx = body.channel_context
+    context_json = serialize_context(
+        metrics=[m.model_dump() for m in ctx.metrics],
+        recommendations=[r.model_dump() for r in ctx.recommendations],
+    )
+    system_prompt = build_chat_system_prompt(
+        channel_title=ctx.title,
+        period_label=ctx.period_label,
+        context_json=context_json,
+    )
+    messages = build_chat_messages(
+        system_prompt=system_prompt,
+        history=[h.model_dump() for h in body.history],
+        user_message=body.message,
+    )
+
+    llm_status, reply = await generate_chat_reply(
+        messages=messages,
+        model=settings.ollama_model,
+        base_url=settings.ollama_base_url,
+        timeout=settings.llm_timeout_seconds,
+    )
+
+    note: str
+    if llm_status == LLMStatus.ok:
+        note = "Respuesta generada por miConte AI basada en datos analíticos precalculados."
+    elif llm_status == LLMStatus.unavailable:
+        note = "El asistente no está disponible en este momento. Inténtalo de nuevo."
+    else:
+        note = "El asistente no pudo procesar la solicitud. Inténtalo de nuevo."
+
+    return AIChatResponse(
+        channel_id=channel_id,
+        reply=reply,
+        ai_status=llm_status.value,
+        degraded=llm_status != LLMStatus.ok,
         note=note,
     )

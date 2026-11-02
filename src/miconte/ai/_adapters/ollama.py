@@ -46,7 +46,7 @@ class OllamaAdapter:
     async def interpret(
         self, request: AnalyticalInterpretationRequest
     ) -> InterpretationResponse:
-        system_prompt = build_system_prompt()
+        system_prompt = request.system_prompt_override or build_system_prompt()
         user_message = build_user_message(request)
 
         payload = {
@@ -56,6 +56,10 @@ class OllamaAdapter:
                 {"role": "user", "content": user_message},
             ],
             "stream": False,
+            # Suppresses the separate reasoning chain (supported by Qwen 3 / 3.5
+            # and other thinking-capable models in Ollama ≥ 0.7).  Ignored
+            # silently by models that do not support it.
+            "think": False,
         }
 
         try:
@@ -66,6 +70,7 @@ class OllamaAdapter:
                 )
                 response.raise_for_status()
                 data = response.json()
+                _log_perf(data, self._model)
         except httpx.TimeoutException:
             logger.warning("Ollama request timed out after %.1fs", self._timeout)
             return InterpretationResponse(
@@ -126,6 +131,32 @@ class OllamaAdapter:
 
 def _extract_content(data: dict) -> str | None:  # type: ignore[type-arg]
     try:
-        return str(data["message"]["content"])
+        content = str(data["message"]["content"])
+        return content if content else None
     except (KeyError, TypeError):
         return None
+
+
+def _log_perf(data: dict, model: str) -> None:  # type: ignore[type-arg]
+    """Emit a single INFO line with Ollama performance counters for diagnosis.
+
+    Does not alter the adapter's return value or the LLMProviderPort contract.
+    Fields are nanoseconds as documented in the Ollama /api/chat reference.
+    """
+    eval_count: int = data.get("eval_count", 0)
+    eval_ns: int = data.get("eval_duration", 0)
+    total_ns: int = data.get("total_duration", 0)
+    load_ns: int = data.get("load_duration", 0)
+    prompt_tokens: int = data.get("prompt_eval_count", 0)
+
+    tok_per_sec = eval_count / (eval_ns / 1_000_000_000) if eval_ns else 0.0
+    logger.info(
+        "ollama perf model=%s tokens_generated=%d prompt_tokens=%d "
+        "tok/s=%.1f total_s=%.2f load_s=%.2f",
+        model,
+        eval_count,
+        prompt_tokens,
+        tok_per_sec,
+        total_ns / 1_000_000_000,
+        load_ns / 1_000_000_000,
+    )

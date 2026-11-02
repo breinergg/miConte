@@ -19,7 +19,7 @@ export interface AIInterpretRequest {
   period_label: string;
   metrics: MetricInput[];
   recommendations: RecommendationInput[];
-  // real_data is absent: the server derives data origin from its own settings.
+  mode?: 'creator' | 'technical';
 }
 
 export interface AIInterpretResponse {
@@ -27,6 +27,32 @@ export interface AIInterpretResponse {
   ai_status: 'ok' | 'disabled' | 'unavailable' | 'error';
   ai_summary: string | null;
   provider: string;
+  degraded: boolean;
+  note: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChannelContext {
+  title: string;
+  period_label: string;
+  metrics: MetricInput[];
+  recommendations: RecommendationInput[];
+}
+
+export interface AIChatRequest {
+  message: string;
+  history: ChatMessage[];
+  channel_context: ChannelContext;
+}
+
+export interface AIChatResponse {
+  channel_id: string;
+  reply: string | null;
+  ai_status: 'ok' | 'disabled' | 'unavailable' | 'error';
   degraded: boolean;
   note: string;
 }

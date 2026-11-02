@@ -59,6 +59,7 @@ class AIService:
         metrics: list[dict[str, Any]],
         recommendations: list[dict[str, Any]],
         real_data: bool = False,
+        system_prompt_override: str | None = None,
     ) -> InterpretationResponse:
         """Generate a natural-language interpretation of channel analytics.
 
@@ -91,6 +92,7 @@ class AIService:
             period_label=period_label,
             metrics=[MetricSummaryInput(**m) for m in metrics],
             recommendations=[RecommendationInput(**r) for r in recommendations],
+            system_prompt_override=system_prompt_override,
         )
 
         try:

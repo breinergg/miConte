@@ -1,7 +1,12 @@
 import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiService } from './api.service';
-import { AIInterpretRequest, AIInterpretResponse } from '../models/ai.model';
+import {
+  AIInterpretRequest,
+  AIInterpretResponse,
+  AIChatRequest,
+  AIChatResponse,
+} from '../models/ai.model';
 
 @Injectable({ providedIn: 'root' })
 export class AiService {
@@ -13,6 +18,16 @@ export class AiService {
   ): Observable<AIInterpretResponse> {
     return this.api.post<AIInterpretResponse>(
       `/channels/${channelId}/ai/interpret`,
+      body,
+    );
+  }
+
+  chatWithChannel(
+    channelId: string,
+    body: AIChatRequest,
+  ): Observable<AIChatResponse> {
+    return this.api.post<AIChatResponse>(
+      `/channels/${channelId}/ai/chat`,
       body,
     );
   }

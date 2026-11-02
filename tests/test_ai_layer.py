@@ -307,3 +307,131 @@ class TestOllamaAdapterWithMock:
         assert result.status == LLMStatus.ok
         assert result.degraded is False
         assert "asociación" in (result.summary or "")
+
+    @pytest.mark.asyncio
+    async def test_thinking_field_not_exposed_in_summary(self) -> None:
+        """The 'thinking' field from reasoning models must never appear in summary."""
+        import httpx
+        import respx
+
+        from miconte.ai._adapters.ollama import OllamaAdapter
+
+        body_with_thinking = {
+            "message": {
+                "role": "assistant",
+                "content": "Se observa un APV de 65% en el periodo.",
+                "thinking": "Primero debo analizar si los datos son suficientes...",
+            }
+        }
+        with respx.mock:
+            respx.post("http://localhost:11434/api/chat").mock(
+                return_value=httpx.Response(200, json=body_with_thinking)
+            )
+            adapter = OllamaAdapter(base_url="http://localhost:11434")
+            result = await adapter.interpret(_make_request())
+
+        assert result.status == LLMStatus.ok
+        assert "thinking" not in (result.summary or "").lower()
+        assert "Primero debo analizar" not in (result.summary or "")
+        assert "APV de 65%" in (result.summary or "")
+
+    @pytest.mark.asyncio
+    async def test_malformed_response_missing_message_returns_error(self) -> None:
+        """A response without 'message' key must return error, not raise."""
+        import httpx
+        import respx
+
+        from miconte.ai._adapters.ollama import OllamaAdapter
+
+        with respx.mock:
+            respx.post("http://localhost:11434/api/chat").mock(
+                return_value=httpx.Response(200, json={"done": True})
+            )
+            adapter = OllamaAdapter(base_url="http://localhost:11434")
+            result = await adapter.interpret(_make_request())
+
+        assert result.status == LLMStatus.error
+        assert result.summary is None
+        assert result.degraded is True
+
+    @pytest.mark.asyncio
+    async def test_malformed_response_empty_content_returns_error(self) -> None:
+        """A response with empty content string must return error."""
+        import httpx
+        import respx
+
+        from miconte.ai._adapters.ollama import OllamaAdapter
+
+        with respx.mock:
+            respx.post("http://localhost:11434/api/chat").mock(
+                return_value=httpx.Response(200, json={"message": {"content": ""}})
+            )
+            adapter = OllamaAdapter(base_url="http://localhost:11434")
+            result = await adapter.interpret(_make_request())
+
+        # Empty string is falsy — _extract_content returns None
+        assert result.status == LLMStatus.error
+        assert result.summary is None
+
+    @pytest.mark.asyncio
+    async def test_connection_error_returns_unavailable(self) -> None:
+        """A connection-refused error must return unavailable, not raise."""
+        import httpx
+        import respx
+
+        from miconte.ai._adapters.ollama import OllamaAdapter
+
+        with respx.mock:
+            respx.post("http://localhost:11434/api/chat").mock(
+                side_effect=httpx.ConnectError("Connection refused")
+            )
+            adapter = OllamaAdapter(base_url="http://localhost:11434")
+            result = await adapter.interpret(_make_request())
+
+        assert result.status == LLMStatus.error
+        assert result.degraded is True
+
+    @pytest.mark.asyncio
+    async def test_http_500_returns_unavailable(self) -> None:
+        """An HTTP 5xx from Ollama must return unavailable status."""
+        import httpx
+        import respx
+
+        from miconte.ai._adapters.ollama import OllamaAdapter
+
+        with respx.mock:
+            respx.post("http://localhost:11434/api/chat").mock(
+                return_value=httpx.Response(500, text="Internal Server Error")
+            )
+            adapter = OllamaAdapter(base_url="http://localhost:11434")
+            result = await adapter.interpret(_make_request())
+
+        assert result.status == LLMStatus.unavailable
+        assert result.degraded is True
+
+    @pytest.mark.asyncio
+    async def test_think_false_included_in_payload(self) -> None:
+        """The payload sent to Ollama must include think:false to suppress reasoning chain."""
+        import httpx
+        import respx
+
+        from miconte.ai._adapters.ollama import OllamaAdapter
+
+        captured: list[dict] = []  # type: ignore[type-arg]
+
+        def capture_request(request: httpx.Request) -> httpx.Response:
+            import json as _json
+            captured.append(_json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={"message": {"content": "Respuesta de prueba."}},
+            )
+
+        with respx.mock:
+            respx.post("http://localhost:11434/api/chat").mock(side_effect=capture_request)
+            adapter = OllamaAdapter(base_url="http://localhost:11434")
+            await adapter.interpret(_make_request())
+
+        assert captured, "No request was captured"
+        assert captured[0].get("think") is False
+        assert captured[0].get("stream") is False

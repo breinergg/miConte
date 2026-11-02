@@ -48,6 +48,9 @@ class AnalyticalInterpretationRequest(BaseModel):
     metrics: list[MetricSummaryInput] = Field(default_factory=list)
     recommendations: list[RecommendationInput] = Field(default_factory=list)
     language: str = "es"
+    # Optional override for the system prompt (e.g. creator-friendly vs technical).
+    # When None, adapters use their default build_system_prompt().
+    system_prompt_override: str | None = None
 
 
 class InterpretationResponse(BaseModel):
